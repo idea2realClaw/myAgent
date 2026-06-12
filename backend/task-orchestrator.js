@@ -1,7 +1,10 @@
 // ============================================================
 // Task Decomposer & Parallel Executor
 // Breaks a complex task into subtasks, runs them concurrently
+// Now supports tool-calling loop (shell, web_fetch, file ops)
 // ============================================================
+
+import { executeTool, buildToolInstructions } from './tool-executor.js';
 
 export class TaskOrchestrator {
   constructor(llmAdapter, onProgress) {
@@ -67,11 +70,12 @@ User request: "${userRequest}"`;
   }
 
   /**
-   * Execute a single subtask
+   * Execute a single subtask (with tool-calling loop)
    */
   async executeSubtask(subtask, context, onChunk) {
-    const messages = [
-      { role: 'system', content: context.system },
+    // Build conversation messages
+    let messages = [
+      { role: 'system', content: context.system + buildToolInstructions() },
       {
         role: 'user',
         content: `# Task: ${subtask.title}\n\n${subtask.description}\n\n${context.history ? `Previous context:\n${context.history}` : ''}`,
@@ -79,23 +83,91 @@ User request: "${userRequest}"`;
     ];
 
     let result = '';
+    let toolLoopCount = 0;
+    const MAX_TOOL_LOOPS = 10;
 
     this.onProgress({ type: 'subtask_start', taskId: subtask.id, title: subtask.title });
 
-    try {
+    while (toolLoopCount < MAX_TOOL_LOOPS) {
+      toolLoopCount++;
+      let llmResponse = '';
+
+      // Stream LLM response, collecting full text
+      this.onProgress({ type: 'subtask_thinking', taskId: subtask.id, loop: toolLoopCount });
       for await (const chunk of this.llm.stream(messages, { temperature: 0.7 })) {
-        result += chunk;
+        llmResponse += chunk;
         if (onChunk) onChunk(subtask.id, chunk);
         this.onProgress({ type: 'subtask_chunk', taskId: subtask.id, chunk });
       }
 
-      this.onProgress({ type: 'subtask_done', taskId: subtask.id, result });
-      return { id: subtask.id, title: subtask.title, result, status: 'done' };
-    } catch (err) {
-      const errMsg = `Error: ${err.message}`;
-      this.onProgress({ type: 'subtask_error', taskId: subtask.id, error: errMsg });
-      return { id: subtask.id, title: subtask.title, result: errMsg, status: 'error' };
+      // Detect tool_call block
+      const toolCallMatch = llmResponse.match(/```tool_call\s*\n([\s\S]*?)\n```/);
+      if (!toolCallMatch) {
+        // No tool call → final answer
+        result = llmResponse;
+        break;
+      }
+
+      // Parse tool call JSON
+      let toolCall;
+      try {
+        toolCall = JSON.parse(toolCallMatch[1].trim());
+      } catch {
+        // If JSON parse fails, try extracting from the whole response
+        const jsonMatch = llmResponse.match(/\{[\s\S]*"tool"[\s\S]*\}/);
+        if (jsonMatch) {
+          try { toolCall = JSON.parse(jsonMatch[0]); } catch { /* ignore */ }
+        }
+      }
+
+      if (!toolCall || !toolCall.tool) {
+        // No valid tool call → treat as final answer
+        result = llmResponse;
+        break;
+      }
+
+      this.onProgress({
+        type: 'tool_call',
+        taskId: subtask.id,
+        tool: toolCall.tool,
+        args: toolCall.arguments,
+      });
+
+      // Execute the tool
+      const toolResult = await executeTool({
+        name: toolCall.tool,
+        arguments: toolCall.arguments || {},
+      });
+
+      this.onProgress({
+        type: 'tool_result',
+        taskId: subtask.id,
+        success: toolResult.success,
+        output: toolResult.output.slice(0, 2000), // truncate for display
+      });
+
+      // Add assistant response (with tool call) and tool result to messages
+      messages.push({
+        role: 'assistant',
+        content: llmResponse,
+      });
+      messages.push({
+        role: 'user',
+        content: `Tool result (${toolCall.tool}):\n\`\`\`json\n${toolResult.output}\n\`\`\`\n\nContinue with the task. If you have the final answer, provide it. Otherwise, call another tool.`,
+      });
+
+      // Trim messages to avoid token overflow
+      if (messages.length > 20) {
+        messages = [messages[0], ...messages.slice(-18)];
+      }
     }
+
+    if (toolLoopCount >= MAX_TOOL_LOOPS) {
+      result += '\n\n[Tool loop limit reached]';
+    }
+
+    this.onProgress({ type: 'subtask_done', taskId: subtask.id, result });
+    return { id: subtask.id, title: subtask.title, result, status: 'done' };
   }
 
   /**
