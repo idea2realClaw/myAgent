@@ -588,6 +588,21 @@ function handleMessage(msg) {
     updateSubtaskCard(msg.taskId, 'error');
   }
 
+  else if (type === 'subtask_thinking') {
+    showStatus(`🤔 Subtask thinking (loop ${msg.loop || 1})...`, 'thinking');
+  }
+
+  else if (type === 'tool_call') {
+    showStatus(`🔧 Calling tool: ${msg.tool}...`, 'thinking');
+    // Optionally render tool call in chat
+    renderToolCall(msg.tool, msg.args);
+  }
+
+  else if (type === 'tool_result') {
+    removeStatus();
+    renderToolResult(msg.success, msg.output);
+  }
+
   else if (type === 'synthesizing') {
     showStatus('✨ Synthesizing results...', 'synthesizing');
     currentAssistantBubble = createAssistantBubble();
