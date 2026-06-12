@@ -2,6 +2,7 @@ node_modules/
 *.log
 .env
 config.json
-dist/
 *.pid
 .DS_Store
+dist/
+!frontend/dist/index.html
