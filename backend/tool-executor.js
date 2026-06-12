@@ -1,0 +1,269 @@
+// ============================================================
+// Tool Executor — Executes tools requested by the LLM
+// Supports: shell commands, web fetch, file operations
+// ============================================================
+
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const execAsync = promisify(exec);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Security: restrict file operations to workspace only
+const WORKSPACE_ROOT = path.join(__dirname, '..');
+
+function sanitizePath(rawPath) {
+  // Resolve to absolute path, reject if outside workspace
+  const resolved = path.resolve(WORKSPACE_ROOT, rawPath);
+  if (!resolved.startsWith(WORKSPACE_ROOT)) {
+    throw new Error(`Path traversal denied: ${rawPath}`);
+  }
+  return resolved;
+}
+
+// ── Tool Implementations ─────────────────────────────────────
+
+async function shellExecute({ command, workdir }) {
+  const cwd = workdir ? sanitizePath(workdir) : WORKSPACE_ROOT;
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd,
+      timeout: 30000,
+      maxbuffer: 1024 * 1024 * 5, // 5MB
+      shell: true,
+    });
+    return {
+      success: true,
+      stdout: stdout || '',
+      stderr: stderr || '',
+      exitCode: 0,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      stdout: err.stdout || '',
+      stderr: err.stderr || '',
+      exitCode: err.code || -1,
+      error: err.message,
+    };
+  }
+}
+
+async function webFetch({ url, prompt }) {
+  try {
+    // Use node's built-in fetch (Node 18+)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const resp = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Agent-WebUI/1.0.0',
+      },
+    });
+    clearTimeout(timeout);
+
+    const contentType = resp.headers.get('content-type') || '';
+    let content;
+
+    if (contentType.includes('application/json')) {
+      content = await resp.json();
+      content = JSON.stringify(content, null, 2);
+    } else {
+      content = await resp.text();
+      // Truncate very long HTML
+      if (content.length > 50000) {
+        content = content.slice(0, 50000) + '\n\n[Truncated — full length: ' + content.length + ' chars]';
+      }
+    }
+
+    let result = `URL: ${url}\nStatus: ${resp.status}\nContent-Type: ${contentType}\n\n${content}`;
+
+    // If LLM needs to analyze the content, optionally summarize
+    if (prompt) {
+      result += `\n\nAnalysis request: ${prompt}`;
+    }
+
+    return { success: true, content: result.slice(0, 100000) };
+  } catch (err) {
+    return {
+      success: false,
+      error: `web_fetch failed: ${err.message}`,
+    };
+  }
+}
+
+async function fileRead({ path: filePath }) {
+  try {
+    const resolved = sanitizePath(filePath);
+    const content = await fs.readFile(resolved, 'utf8');
+    return { success: true, content, path: filePath };
+  } catch (err) {
+    return { success: false, error: `file_read failed: ${err.message}` };
+  }
+}
+
+async function fileWrite({ path: filePath, content, append }) {
+  try {
+    const resolved = sanitizePath(filePath);
+    const dir = path.dirname(resolved);
+    await fs.mkdir(dir, { recursive: true });
+
+    if (append) {
+      await fs.appendFile(resolved, content, 'utf8');
+    } else {
+      await fs.writeFile(resolved, content, 'utf8');
+    }
+    return { success: true, path: filePath, bytes: content.length };
+  } catch (err) {
+    return { success: false, error: `file_write failed: ${err.message}` };
+  }
+}
+
+async function fileList({ path: dirPath }) {
+  try {
+    const resolved = sanitizePath(dirPath || '.');
+    const entries = await fs.readdir(resolved, { withFileTypes: true });
+    const result = entries.map(e => ({
+      name: e.name,
+      type: e.isDirectory() ? 'dir' : 'file',
+    }));
+    return { success: true, path: dirPath || '.', entries: result };
+  } catch (err) {
+    return { success: false, error: `file_list failed: ${err.message}` };
+  }
+}
+
+// ── Tool Schema (for LLM prompt) ────────────────────────────
+
+export const TOOL_SCHEMAS = {
+  shell_execute: {
+    name: 'shell_execute',
+    description: 'Execute a shell command and return stdout/stderr. Use for git, npm, ls, grep, and any CLI tool.',
+    parameters: {
+      command: { type: 'string', description: 'Shell command to execute', required: true },
+      workdir: { type: 'string', description: 'Working directory (relative to workspace root)', required: false },
+    },
+  },
+  web_fetch: {
+    name: 'web_fetch',
+    description: 'Fetch content from a URL. Use for reading web pages, APIs, or downloading content.',
+    parameters: {
+      url: { type: 'string', description: 'URL to fetch', required: true },
+      prompt: { type: 'string', description: 'Optional: what to extract or analyze from the page', required: false },
+    },
+  },
+  file_read: {
+    name: 'file_read',
+    description: 'Read the contents of a file. Use to examine code, configs, or any text file.',
+    parameters: {
+      path: { type: 'string', description: 'File path (relative to workspace)', required: true },
+    },
+  },
+  file_write: {
+    name: 'file_write',
+    description: 'Write content to a file. Creates the file if it does not exist.',
+    parameters: {
+      path: { type: 'string', description: 'File path (relative to workspace)', required: true },
+      content: { type: 'string', description: 'Content to write', required: true },
+      append: { type: 'boolean', description: 'Append instead of overwrite', required: false },
+    },
+  },
+  file_list: {
+    name: 'file_list',
+    description: 'List files and directories in a path. Use to explore the project structure.',
+    parameters: {
+      path: { type: 'string', description: 'Directory path (relative to workspace), defaults to root', required: false },
+    },
+  },
+};
+
+// ── Main dispatch ────────────────────────────────────────────
+
+export async function executeTool(toolCall) {
+  const { name, arguments: args } = toolCall;
+
+  try {
+    let result;
+    switch (name) {
+      case 'shell_execute':
+        result = await shellExecute(args);
+        break;
+      case 'web_fetch':
+        result = await webFetch(args);
+        break;
+      case 'file_read':
+        result = await fileRead(args);
+        break;
+      case 'file_write':
+        result = await fileWrite(args);
+        break;
+      case 'file_list':
+        result = await fileList(args);
+        break;
+      default:
+        return { success: false, error: `Unknown tool: ${name}` };
+    }
+
+    // Format result for LLM consumption
+    if (result.success) {
+      return {
+        success: true,
+        output: JSON.stringify(result, null, 2),
+      };
+    } else {
+      return {
+        success: false,
+        output: `Error: ${result.error}`,
+      };
+    }
+  } catch (err) {
+    return {
+      success: false,
+      output: `Tool execution error: ${err.message}`,
+    };
+  }
+}
+
+// ── Build tool instructions for system prompt ────────────────
+
+export function buildToolInstructions() {
+  const lines = [
+    '',
+    '## Available Tools',
+    'You have access to the following tools. To use a tool, respond with a JSON code block in this exact format:',
+    '',
+    '```tool_call',
+    JSON.stringify({ tool: 'tool_name', arguments: { /* ... */ } }, null, 2),
+    '```',
+    '',
+    'After I execute the tool, I will send you the result. You can then make additional tool calls or provide a final answer.',
+    '',
+    '### Tool Definitions:',
+    '',
+  ];
+
+  for (const [name, schema] of Object.entries(TOOL_SCHEMAS)) {
+    lines.push(`**${name}** — ${schema.description}`);
+    for (const [param, desc] of Object.entries(schema.parameters)) {
+      const req = desc.required ? '(required)' : '(optional)';
+      lines.push(`  - \`${param}\` ${req}: ${desc.description}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('### Important Notes:');
+  lines.push('- Always use \`shell_execute\` for Git operations, npm/yarn commands, or any CLI tool.');
+  lines.push('- Use \`web_fetch\` to get current information from URLs (the LLM training data has a cutoff).');
+  lines.push('- Use \`file_read\` before editing files to understand their current content.');
+  lines.push('- Keep tool call responses concise. Only call tools that are necessary.');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+export default { executeTool, TOOL_SCHEMAS, buildToolInstructions };

@@ -16,6 +16,7 @@ import { LLMAdapter } from './llm-adapter.js';
 import { SkillLoader } from './skill-loader.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
+import { executeTool, buildToolInstructions } from './tool-executor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -23,7 +24,7 @@ const IDENTITY_DIR = path.join(ROOT_DIR, 'identity');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 
-// ── Config persistence ──────────────────────────────────────
+// ── Config persistence ──────────────────────────────
 function loadConfig() {
   if (fs.existsSync(CONFIG_FILE)) {
     try {
@@ -43,7 +44,7 @@ function saveConfig(cfg) {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
-// ── App init ─────────────────────────────────────────────────
+// ── App init ─────────────────────────────────────────
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -52,14 +53,14 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(ROOT_DIR, 'frontend', 'dist')));
 
-// ── Singletons ───────────────────────────────────────────────
+// ── Singletons ───────────────────────────────────────
 const identity = new IdentityManager(IDENTITY_DIR);
 identity.load();
 
 const skillLoader = new SkillLoader(ROOT_DIR);
 skillLoader.load();
 
-// ── WebSocket sessions ───────────────────────────────────────
+// ── WebSocket sessions ─────────────────────────────────
 const sessions = new Map(); // sessionId -> { ws, history, config }
 
 function broadcast(ws, data) {
@@ -68,7 +69,7 @@ function broadcast(ws, data) {
   }
 }
 
-// ── Build system prompt ──────────────────────────────────────
+// ── Build system prompt ──────────────────────────────
 function buildSystemPrompt() {
   const parts = [];
 
@@ -80,17 +81,20 @@ function buildSystemPrompt() {
   const skillsSnippet = skillLoader.toSystemPromptSnippet();
   if (skillsSnippet) parts.push(skillsSnippet);
 
-  // Base instructions
-  parts.push(`You are a powerful AI Agent. 
+  // Base instructions + tool instructions
+  parts.push(`You are a powerful AI Agent.
 - When a user loads a skill by name, inject the skill's full content and follow its instructions.
 - Decompose complex tasks into parallel subtasks when beneficial.
 - Be direct, thorough, and resourceful.
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
+  // Append tool usage instructions
+  parts.push(buildToolInstructions());
+
   return parts.join('\n\n');
 }
 
-// ── REST API ─────────────────────────────────────────────────
+// ── REST API ─────────────────────────────────────────
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -143,7 +147,7 @@ app.post('/api/identity/soul', (req, res) => {
   res.json({ success: true });
 });
 
-// ── WebSocket handler ─────────────────────────────────────────
+// ── WebSocket handler ─────────────────────────────────
 wss.on('connection', (ws) => {
   const sessionId = uuidv4();
   sessions.set(sessionId, { ws, history: [], config: loadConfig() });
@@ -181,11 +185,62 @@ wss.on('connection', (ws) => {
   });
 });
 
-// ── Chat handler ──────────────────────────────────────────────
+// ── Direct tool/command execution (no LLM needed) ───────
+async function handleDirectExecution(ws, session, toolCall, rawInput) {
+  const { history } = session;
+
+  // Add user message to history
+  history.push({ role: 'user', content: rawInput });
+
+  const toolName = toolCall.name || 'shell_execute';
+  broadcast(ws, { type: 'tool_call', tool: toolName, args: toolCall.arguments });
+
+  const result = await executeTool(toolCall);
+
+  broadcast(ws, {
+    type: 'tool_result',
+    success: result.success,
+    output: result.output,
+  });
+
+  const answer = `## Execution Result\n\n${result.output}`;
+  history.push({ role: 'assistant', content: answer });
+
+  broadcast(ws, {
+    type: 'done',
+    content: answer,
+    subtasks: [],
+  });
+}
+
+// ── Chat handler ──────────────────────────────────────
 async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
   const userMessage = msg.content;
-  const useParallel = msg.parallel !== false; // default: true
+
+  // ── Direct tool/command execution (skip LLM) ──────────
+  // If user sends JSON with "command" or "tool" field, execute directly
+  let directExec = null;
+  try {
+    const parsed = JSON.parse(userMessage.trim());
+    if (parsed.command) {
+      // Shell command direct execution
+      directExec = { name: 'shell_execute', arguments: { command: parsed.command, workdir: parsed.workdir || '' } };
+    } else if (parsed.tool && parsed.arguments) {
+      // Tool call direct execution
+      directExec = { name: parsed.tool, arguments: parsed.arguments };
+    } else if (parsed.url && !parsed.tool) {
+      // URL fetch direct execution
+      directExec = { name: 'web_fetch', arguments: { url: parsed.url, prompt: parsed.prompt || '' } };
+    }
+  } catch {
+    // Not JSON, proceed with normal LLM chat
+  }
+
+  if (directExec) {
+    await handleDirectExecution(ws, session, directExec, userMessage);
+    return;
+  }
 
   // Check API key
   const cfg = { ...loadConfig(), ...config };
@@ -265,7 +320,6 @@ async function handleChat(sessionId, session, msg) {
         id: r.id,
         title: r.title,
         status: r.status,
-        // Don't include raw result to keep response clean
       })),
     });
 
@@ -274,7 +328,7 @@ async function handleChat(sessionId, session, msg) {
   }
 }
 
-// ── SPA fallback ──────────────────────────────────────────────
+// ── SPA fallback ──────────────────────────────────────
 app.get('*', (req, res) => {
   const indexPath = path.join(ROOT_DIR, 'frontend', 'dist', 'index.html');
   if (fs.existsSync(indexPath)) {
@@ -284,7 +338,7 @@ app.get('*', (req, res) => {
   }
 });
 
-// ── Start ─────────────────────────────────────────────────────
+// ── Start ─────────────────────────────────────────────
 const PORT = process.env.PORT || 3737;
 server.listen(PORT, () => {
   console.log(`\n🚀 Agent WebUI Backend running at http://localhost:${PORT}`);
