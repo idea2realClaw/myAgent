@@ -148,22 +148,38 @@ app.post('/api/skills/:name/disable', (req, res) => {
 
 // Scan directory for skills
 app.post('/api/skills/scan', (req, res) => {
-  const { directory } = req.body;
-  if (!directory) return res.status(400).json({ error: 'directory required' });
+  try {
+    const { directory } = req.body;
+    if (!directory) {
+      return res.status(400).json({ error: 'directory required' });
+    }
   
-  const result = skillLoader.scanDirectory(directory);
-  res.json(result);
+    console.log(`[API] Scanning directory: ${directory}`);
+    const result = skillLoader.scanDirectory(directory);
+    console.log(`[API] Scan result:`, result);
+    res.json(result);
+  } catch (err) {
+    console.error(`[API] Error scanning directory:`, err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Add skill from directory
 app.post('/api/skills/add', (req, res) => {
-  const { sourcePath, targetDir } = req.body;
-  if (!sourcePath || !targetDir) {
-    return res.status(400).json({ error: 'sourcePath and targetDir required' });
-  }
+  try {
+    const { sourcePath, targetDir } = req.body;
+    if (!sourcePath || !targetDir) {
+      return res.status(400).json({ error: 'sourcePath and targetDir required' });
+    }
   
-  const result = skillLoader.addSkillFromPath(sourcePath, targetDir);
-  res.json(result);
+    console.log(`[API] Adding skill from ${sourcePath} to ${targetDir}`);
+    const result = skillLoader.addSkillFromPath(sourcePath, targetDir);
+    console.log(`[API] Add result:`, result);
+    res.json(result);
+  } catch (err) {
+    console.error(`[API] Error adding skill:`, err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Identity status
