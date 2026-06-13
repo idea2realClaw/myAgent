@@ -1,6 +1,6 @@
 // ============================================================
 // Tool Executor — Executes tools requested by the LLM
-// Supports: shell commands, web fetch, file operations
+// Supports: shell commands, web fetch, file operations, search
 // ============================================================
 
 import { exec } from 'child_process';
@@ -9,6 +9,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { minimatch } from 'minimatch'; // For glob pattern matching
 
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -138,6 +139,98 @@ async function fileList({ path: dirPath }) {
   }
 }
 
+// ── New Tools (OpenCode style) ─────────────────────────────
+
+async function fileEdit({ path: filePath, old_string, new_string, replace_all }) {
+  try {
+    const resolved = sanitizePath(filePath);
+    const content = await fs.readFile(resolved, 'utf8');
+
+    let newContent;
+    if (replace_all) {
+      newContent = content.split(old_string).join(new_string);
+    } else {
+      const idx = content.indexOf(old_string);
+      if (idx === -1) {
+        return { success: false, error: `old_string not found in ${filePath}` };
+      }
+      newContent = content.slice(0, idx) + new_string + content.slice(idx + old_string.length);
+    }
+
+    await fs.writeFile(resolved, newContent, 'utf8');
+    return { success: true, path: filePath, changed: true };
+  } catch (err) {
+    return { success: false, error: `file_edit failed: ${err.message}` };
+  }
+}
+
+async function fileGlob({ pattern, path: searchPath }) {
+  try {
+    const root = sanitizePath(searchPath || '.');
+    const results = [];
+
+    async function walk(dir) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        const rel = path.relative(root, full);
+        if (minimatch(rel, pattern, { matchBase: true })) {
+          results.push(rel);
+        }
+        if (e.isDirectory() && !e.name.startsWith('.')) {
+          await walk(full);
+        }
+      }
+    }
+
+    await walk(root);
+    return { success: true, pattern, matches: results.slice(0, 200) };
+  } catch (err) {
+    return { success: false, error: `file_glob failed: ${err.message}` };
+  }
+}
+
+async function fileGrep({ pattern, path: searchPath, include, literal_text }) {
+  try {
+    const root = sanitizePath(searchPath || '.');
+    const regex = literal_text ? new RegExp(escapeRegExp(pattern), 'i') : new RegExp(pattern, 'i');
+    const results = [];
+
+    async function walk(dir) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        const rel = path.relative(root, full);
+
+        if (e.isDirectory()) {
+          if (!e.name.startsWith('.')) await walk(full);
+        } else if (e.isFile()) {
+          if (include && !minimatch(e.name, include)) continue;
+
+          try {
+            const content = await fs.readFile(full, 'utf8');
+            const lines = content.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+              if (regex.test(lines[i])) {
+                results.push({ file: rel, line: i + 1, content: lines[i].trim() });
+              }
+            }
+          } catch { /* skip binary files */ }
+        }
+      }
+    }
+
+    await walk(root);
+    return { success: true, pattern, matches: results.slice(0, 100) };
+  } catch (err) {
+    return { success: false, error: `file_grep failed: ${err.message}` };
+  }
+}
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // ── Tool Schema (for LLM prompt) ────────────────────────────
 
 export const TOOL_SCHEMAS = {
@@ -173,11 +266,39 @@ export const TOOL_SCHEMAS = {
       append: { type: 'boolean', description: 'Append instead of overwrite', required: false },
     },
   },
+  file_edit: {
+    name: 'file_edit',
+    description: 'Edit a file by replacing specific text. Use to make targeted changes without rewriting the entire file.',
+    parameters: {
+      path: { type: 'string', description: 'File path (relative to workspace)', required: true },
+      old_string: { type: 'string', description: 'Exact text to replace (must match exactly)', required: true },
+      new_string: { type: 'string', description: 'New text to insert', required: true },
+      replace_all: { type: 'boolean', description: 'Replace all occurrences (default: false)', required: false },
+    },
+  },
   file_list: {
     name: 'file_list',
     description: 'List files and directories in a path. Use to explore the project structure.',
     parameters: {
       path: { type: 'string', description: 'Directory path (relative to workspace), defaults to root', required: false },
+    },
+  },
+  file_glob: {
+    name: 'file_glob',
+    description: 'Search for files matching a pattern (e.g., "**/*.js"). Use to find files by name.',
+    parameters: {
+      pattern: { type: 'string', description: 'Glob pattern (e.g., "**/*.js", "src/**/*.ts")', required: true },
+      path: { type: 'string', description: 'Root directory to search (relative to workspace)', required: false },
+    },
+  },
+  file_grep: {
+    name: 'file_grep',
+    description: 'Search for text patterns inside files. Use to find where a function, variable, or string is used.',
+    parameters: {
+      pattern: { type: 'string', description: 'Regex pattern to search for', required: true },
+      path: { type: 'string', description: 'Directory to search (relative to workspace)', required: false },
+      include: { type: 'string', description: 'File pattern to include (e.g., "*.js")', required: false },
+      literal_text: { type: 'boolean', description: 'Treat pattern as literal text, not regex', required: false },
     },
   },
 };
@@ -202,8 +323,17 @@ export async function executeTool(toolCall) {
       case 'file_write':
         result = await fileWrite(args);
         break;
+      case 'file_edit':
+        result = await fileEdit(args);
+        break;
       case 'file_list':
         result = await fileList(args);
+        break;
+      case 'file_glob':
+        result = await fileGlob(args);
+        break;
+      case 'file_grep':
+        result = await fileGrep(args);
         break;
       default:
         return { success: false, error: `Unknown tool: ${name}` };

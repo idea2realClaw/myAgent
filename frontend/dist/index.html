@@ -347,6 +347,39 @@
     #toast.show { transform: translateY(0); opacity: 1; }
     #toast.success { border-color: var(--green); color: var(--green); }
     #toast.error { border-color: var(--red); color: var(--red); }
+
+    /* ── Tool Call Cards ──────────────────────────────── */
+    .tool-call-card {
+      margin: 12px 0; padding: 12px 16px; border-radius: var(--radius-sm);
+      background: var(--bg3); border: 1px solid var(--border);
+      font-size: 13px; max-width: 90%;
+    }
+    .tool-call-header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+      font-weight: 600; color: var(--accent2);
+    }
+    .tool-icon { font-size: 16px; }
+    .tool-name { font-size: 13px; }
+    .tool-call-args { color: var(--text2); font-size: 12px; }
+    .tool-call-args pre { margin: 8px 0 0 0; padding: 8px; background: var(--bg4); border-radius: 6px; overflow-x: auto; }
+    .tool-url { color: var(--blue); word-break: break-all; }
+    .tool-path { color: var(--green); }
+
+    /* ── Tool Result Cards ────────────────────────────── */
+    .tool-result-card {
+      margin: 8px 0 16px 0; padding: 12px 16px; border-radius: var(--radius-sm);
+      font-size: 12px; max-width: 90%;
+      border-left: 3px solid;
+    }
+    .tool-result-card.success { background: rgba(52,211,153,0.08); border-color: var(--green); }
+    .tool-result-card.error { background: rgba(248,113,113,0.08); border-color: var(--red); }
+    .tool-result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 600; }
+    .tool-result-icon { font-size: 14px; }
+    .tool-result-status { font-size: 12px; }
+    .tool-result-card.success .tool-result-status { color: var(--green); }
+    .tool-result-card.error .tool-result-status { color: var(--red); }
+    .tool-result-output { max-height: 300px; overflow-y: auto; }
+    .tool-result-output pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -692,6 +725,63 @@ function removeStatus() {
     statusEl.remove();
     statusEl = null;
   }
+}
+
+function renderToolCall(tool, args) {
+  hideWelcome();
+  const container = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = 'tool-call-card';
+
+  let argsHtml = '';
+  if (args) {
+    if (tool === 'shell_execute' && args.command) {
+      argsHtml = `<pre><code>${escapeHtml(args.command)}</code></pre>`;
+    } else if (tool === 'web_fetch' && args.url) {
+      argsHtml = `<div class="tool-url">${escapeHtml(args.url)}</div>`;
+    } else if (tool === 'file_read' && args.path) {
+      argsHtml = `<div class="tool-path">${escapeHtml(args.path)}</div>`;
+    } else if (tool === 'file_write' && args.path) {
+      argsHtml = `<div class="tool-path">${escapeHtml(args.path)}</div>`;
+    } else if (tool === 'file_edit' && args.path) {
+      argsHtml = `<div class="tool-path">${escapeHtml(args.path)}</div>`;
+    } else if (tool === 'file_glob' && args.pattern) {
+      argsHtml = `<div class="tool-pattern">Pattern: ${escapeHtml(args.pattern)}</div>`;
+    } else if (tool === 'file_grep' && args.pattern) {
+      argsHtml = `<div class="tool-pattern">Pattern: ${escapeHtml(args.pattern)}</div>`;
+    } else {
+      argsHtml = `<pre><code>${escapeHtml(JSON.stringify(args, null, 2))}</code></pre>`;
+    }
+  }
+
+  el.innerHTML = `
+    <div class="tool-call-header">
+      <span class="tool-icon">🔧</span>
+      <span class="tool-name">${tool}</span>
+    </div>
+    <div class="tool-call-args">${argsHtml}</div>
+  `;
+  container.appendChild(el);
+  scrollToBottom();
+}
+
+function renderToolResult(success, output) {
+  const container = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = `tool-result-card ${success ? 'success' : 'error'}`;
+
+  const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+  const truncated = outputStr.length > 2000 ? outputStr.slice(0, 2000) + '\n\n[Truncated...]' : outputStr;
+
+  el.innerHTML = `
+    <div class="tool-result-header">
+      <span class="tool-result-icon">${success ? '✅' : '❌'}</span>
+      <span class="tool-result-status">${success ? 'Success' : 'Failed'}</span>
+    </div>
+    <div class="tool-result-output"><pre><code>${escapeHtml(truncated)}</code></pre></div>
+  `;
+  container.appendChild(el);
+  scrollToBottom();
 }
 
 function renderPlanCard(plan) {
