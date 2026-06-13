@@ -133,6 +133,19 @@ export class SkillLoader {
     return skill.content;
   }
   
+  getSearchPaths() {
+    const paths = [];
+    for (const basePath of SKILL_SEARCH_PATHS) {
+      const resolved = path.isAbsolute(basePath)
+        ? basePath
+        : path.join(this.cwd, basePath);
+      if (fs.existsSync(resolved)) {
+        paths.push(resolved);
+      }
+    }
+    return paths;
+  }
+  
   isEnabled(name) {
     return this.skills.has(name) && this.skills.get(name).enabled;
   }

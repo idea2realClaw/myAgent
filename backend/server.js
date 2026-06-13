@@ -134,6 +134,12 @@ app.get('/api/skills/:name', (req, res) => {
   res.json({ name: req.params.name, content });
 });
 
+// Get common skill directories (for folder browser)
+app.get('/api/skills/paths', (req, res) => {
+  const paths = skillLoader.getSearchPaths();
+  res.json({ paths });
+});
+
 // Enable a skill
 app.post('/api/skills/:name/enable', (req, res) => {
   skillLoader.enable(req.params.name);
@@ -193,6 +199,52 @@ app.post('/api/identity/soul', (req, res) => {
   if (!content) return res.status(400).json({ error: 'content required' });
   identity.updateSoul(content);
   res.json({ success: true });
+});
+
+// ── File browser API ─────────────────────────────────
+// List directories at the given path
+app.get('/api/files/list', (req, res) => {
+  try {
+    const dirPath = req.query.path || '/';
+    
+    // Security: only allow absolute paths
+    if (!path.isAbsolute(dirPath)) {
+      return res.status(400).json({ error: 'Absolute path required' });
+    }
+    
+    if (!fs.existsSync(dirPath)) {
+      return res.status(404).json({ error: 'Directory not found' });
+    }
+    
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ error: 'Path is not a directory' });
+    }
+    
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    const directories = entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => ({
+        name: entry.name,
+        path: path.join(dirPath, entry.name)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    
+    res.json({
+      currentPath: dirPath,
+      parent: path.dirname(dirPath),
+      directories
+    });
+  } catch (err) {
+    console.error('[API] Error listing files:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get common skill directories
+app.get('/api/skills/paths', (req, res) => {
+  const paths = skillLoader.getSearchPaths();
+  res.json({ paths });
 });
 
 // ── WebSocket handler ─────────────────────────────────

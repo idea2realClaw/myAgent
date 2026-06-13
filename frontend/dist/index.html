@@ -131,6 +131,18 @@
     input:checked + .toggle-slider { background-color: var(--accent); border-color: var(--accent); }
     input:checked + .toggle-slider:before { transform: translateX(16px); background-color: #fff; }
     
+    /* Directory browser */
+    #current-path {
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 11px;
+    }
+    #directory-list {
+      border: 1px solid var(--border);
+    }
+    #directory-list div:hover {
+      background: var(--bg4) !important;
+    }
+    
     .skill-path { font-size: 10px; color: var(--text3); margin-top: 4px; word-break: break-all; }
 
     /* Identity status */
@@ -1231,6 +1243,9 @@ function toggleSkill(name, enabled) {
 }
 
 // Add skill from directory related functions
+let currentBrowserTarget = null; // 'source' or 'target'
+let currentBrowserPath = '/'; // Current path being browsed
+
 function showAddSkillDialog() {
   const html = `
     <div id="add-skill-dialog" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000">
@@ -1240,12 +1255,22 @@ function showAddSkillDialog() {
         <div style="display:flex;flex-direction:column;gap:12px">
           <div>
             <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Source Directory (containing SKILL.md)</label>
-            <input type="text" id="skill-source-path" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder="/path/to/skills/my-skill" />
+            <div style="display:flex;gap:8px">
+              <input type="text" id="skill-source-path" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder="/path/to/skills" />
+              <button onclick="showDirectoryBrowser('source')" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:13px;white-space:nowrap">
+                📂 Browse
+              </button>
+            </div>
           </div>
           
           <div>
             <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Target Directory (to copy skill to)</label>
-            <input type="text" id="skill-target-dir" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder=".claude/skills" />
+            <div style="display:flex;gap:8px">
+              <input type="text" id="skill-target-dir" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder=".claude/skills" />
+              <button onclick="showDirectoryBrowser('target')" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:13px;white-space:nowrap">
+                📂 Browse
+              </button>
+            </div>
           </div>
           
           <div style="display:flex;gap:8px;margin-top:8px">
@@ -1268,7 +1293,120 @@ function showAddSkillDialog() {
     </div>
   `;
   
+  // Remove existing dialog if any
+  const existing = document.getElementById('add-skill-dialog');
+  if (existing) existing.remove();
+  
   document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function showDirectoryBrowser(target) {
+  currentBrowserTarget = target;
+  
+  const html = `
+    <div id="dir-browser-dialog" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1001">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;width:600px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column">
+        <h3 style="margin:0 0 16px;color:var(--text)">Select Directory</h3>
+        
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <button onclick="navigateDirectory('..')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size:12px">
+            ⬆️ Up
+          </button>
+          <div id="current-path" style="flex:1;padding:6px 10px;border-radius:6px;background:var(--bg3);color:var(--text2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            Loading...
+          </div>
+        </div>
+        
+        <div id="directory-list" style="flex:1;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;min-height:200px;max-height:300px">
+          <div style="padding:16px;text-align:center;color:var(--text3);font-size:12px">Loading directories...</div>
+        </div>
+        
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button onclick="selectCurrentDirectory()" style="flex:1;padding:8px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600">
+            ✅ Select This Directory
+          </button>
+          <button onclick="closeDirectoryBrowser()" style="padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:13px">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Remove existing dialog if any
+  const existing = document.getElementById('dir-browser-dialog');
+  if (existing) existing.remove();
+  
+  document.body.insertAdjacentHTML('beforeend', html);
+  
+  // Start from common paths or root
+  loadDirectoryList('/');
+}
+
+async function loadDirectoryList(dirPath) {
+  try {
+    const response = await fetch(`/api/files/list?path=${encodeURIComponent(dirPath)}`);
+    const result = await response.json();
+    
+    if (result.error) {
+      document.getElementById('directory-list').innerHTML = `
+        <div style="padding:16px;text-align:center;color:var(--red);font-size:12px">${result.error}</div>
+      `;
+      return;
+    }
+    
+    const container = document.getElementById('directory-list');
+    const currentPathEl = document.getElementById('current-path');
+    
+    currentPathEl.textContent = result.currentPath;
+    currentBrowserPath = result.currentPath;
+    
+    if (!result.directories || !result.directories.length) {
+      container.innerHTML = `
+        <div style="padding:16px;text-align:center;color:var(--text3);font-size:12px">No subdirectories found</div>
+      `;
+      return;
+    }
+    
+    container.innerHTML = result.directories.map(dir => `
+      <div onclick="navigateDirectory('${dir.path.replace(/'/g, "\\'")}')" style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text);hover:background:var(--bg4)" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='none'">
+        📁 ${dir.name}
+      </div>
+    `).join('');
+  } catch (err) {
+    document.getElementById('directory-list').innerHTML = `
+      <div style="padding:16px;text-align:center;color:var(--red);font-size:12px">Failed to load directories: ${err.message}</div>
+    `;
+  }
+}
+
+function navigateDirectory(path) {
+  if (path === '..') {
+    // Go up one level
+    const parent = currentBrowserPath.split('/').slice(0, -1).join('/') || '/';
+    loadDirectoryList(parent);
+  } else {
+    loadDirectoryList(path);
+  }
+}
+
+function selectCurrentDirectory() {
+  if (!currentBrowserPath) {
+    showToast('No directory selected', 'error');
+    return;
+  }
+  
+  const targetInputId = currentBrowserTarget === 'source' ? 'skill-source-path' : 'skill-target-dir';
+  document.getElementById(targetInputId).value = currentBrowserPath;
+  
+  closeDirectoryBrowser();
+  showToast(`Selected: ${currentBrowserPath}`, 'success');
+}
+
+function closeDirectoryBrowser() {
+  const dialog = document.getElementById('dir-browser-dialog');
+  if (dialog) dialog.remove();
+  currentBrowserTarget = null;
 }
 
 function closeAddSkillDialog() {
