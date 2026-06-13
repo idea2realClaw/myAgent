@@ -360,7 +360,8 @@
     }
     .tool-icon { font-size: 16px; }
     .tool-name { font-size: 13px; }
-    .tool-call-args { color: var(--text2); font-size: 12px; }
+    .tool-call-args { color: var(--text2); font-size: 12px; margin-top: 8px; }
+    .tool-call-args.collapsed { display: none; }
     .tool-call-args pre { margin: 8px 0 0 0; padding: 8px; background: var(--bg4); border-radius: 6px; overflow-x: auto; }
     .tool-url { color: var(--blue); word-break: break-all; }
     .tool-path { color: var(--green); }
@@ -370,15 +371,18 @@
       margin: 8px 0 16px 0; padding: 12px 16px; border-radius: var(--radius-sm);
       font-size: 12px; max-width: 90%;
       border-left: 3px solid;
+      cursor: pointer;
     }
     .tool-result-card.success { background: rgba(52,211,153,0.08); border-color: var(--green); }
     .tool-result-card.error { background: rgba(248,113,113,0.08); border-color: var(--red); }
-    .tool-result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 600; }
+    .tool-result-header { display: flex; align-items: center; gap: 8px; font-weight: 600; }
     .tool-result-icon { font-size: 14px; }
-    .tool-result-status { font-size: 12px; }
+    .tool-result-status { font-size: 12px; flex: 1; }
     .tool-result-card.success .tool-result-status { color: var(--green); }
     .tool-result-card.error .tool-result-status { color: var(--red); }
-    .tool-result-output { max-height: 300px; overflow-y: auto; }
+    .tool-toggle-icon { font-size: 10px; color: var(--text2); transition: transform 0.2s; }
+    .tool-result-output { max-height: 300px; overflow-y: auto; margin-top: 8px; }
+    .tool-result-output.collapsed { display: none; }
     .tool-result-output pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
   </style>
 </head>
@@ -525,6 +529,10 @@
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             Send
           </button>
+          <button id="stop-btn" onclick="stopMessage()" style="display:none; background: var(--red); border-color: var(--red);">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+            Stop
+          </button>
         </div>
       </div>
       <div id="input-hint">Enter to send · Shift+Enter for newline · Parallel mode auto-splits complex tasks</div>
@@ -655,6 +663,10 @@ function handleMessage(msg) {
     isThinking = false;
     setSendEnabled(true);
 
+    // Toggle buttons: hide Stop, show Send
+    document.getElementById('stop-btn').style.display = 'none';
+    document.getElementById('send-btn').style.display = 'flex';
+
     // If no synthesis happened (single task), render now
     if (!currentAssistantBubble) {
       renderAssistantMessage(msg.content);
@@ -674,6 +686,10 @@ function handleMessage(msg) {
     setSendEnabled(true);
     showToast(msg.message, 'error');
     renderErrorMessage(msg.message);
+
+    // Toggle buttons: hide Stop, show Send
+    document.getElementById('stop-btn').style.display = 'none';
+    document.getElementById('send-btn').style.display = 'flex';
   }
 
   else if (type === 'skills_reloaded') {
@@ -733,6 +749,22 @@ function renderToolCall(tool, args) {
   const el = document.createElement('div');
   el.className = 'tool-call-card';
 
+  // Generate summary
+  let summary = tool;
+  if (args) {
+    if (tool === 'shell_execute' && args.command) {
+      summary = `${tool}: ${args.command.slice(0, 50)}${args.command.length > 50 ? '...' : ''}`;
+    } else if (tool === 'web_fetch' && args.url) {
+      summary = `${tool}: ${args.url}`;
+    } else if (args.path) {
+      summary = `${tool}: ${args.path}`;
+    } else if (args.pattern) {
+      summary = `${tool}: ${args.pattern}`;
+    }
+  }
+
+  const argsId = `tool-args-${Date.now()}`;
+
   let argsHtml = '';
   if (args) {
     if (tool === 'shell_execute' && args.command) {
@@ -755,11 +787,14 @@ function renderToolCall(tool, args) {
   }
 
   el.innerHTML = `
-    <div class="tool-call-header">
+    <div class="tool-call-header" onclick="toggleToolOutput('${argsId}')">
       <span class="tool-icon">🔧</span>
-      <span class="tool-name">${tool}</span>
+      <span class="tool-name">${summary}</span>
+      <span class="tool-toggle-icon" id="${argsId}-icon">▼</span>
     </div>
-    <div class="tool-call-args">${argsHtml}</div>
+    <div class="tool-call-args collapsed" id="${argsId}">
+      ${argsHtml}
+    </div>
   `;
   container.appendChild(el);
   scrollToBottom();
@@ -770,15 +805,33 @@ function renderToolResult(success, output) {
   const el = document.createElement('div');
   el.className = `tool-result-card ${success ? 'success' : 'error'}`;
 
+  // Generate summary
+  let summary = success ? 'Success' : 'Failed';
+  if (success && output) {
+    if (typeof output === 'object' && output.entries) {
+      summary = `Success - ${output.entries.length} entries`;
+    } else if (typeof output === 'object' && output.matches) {
+      summary = `Success - ${output.matches.length} matches`;
+    } else if (typeof output === 'string' && output.length > 100) {
+      summary = `Success - ${output.length} chars`;
+    }
+  } else if (!success && output) {
+    const errorMsg = typeof output === 'object' ? output.error : output;
+    summary = `Failed - ${errorMsg.slice(0, 50)}`;
+  }
+
   const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-  const truncated = outputStr.length > 2000 ? outputStr.slice(0, 2000) + '\n\n[Truncated...]' : outputStr;
+  const outputId = `tool-output-${Date.now()}`;
 
   el.innerHTML = `
-    <div class="tool-result-header">
+    <div class="tool-result-header" onclick="toggleToolOutput('${outputId}')">
       <span class="tool-result-icon">${success ? '✅' : '❌'}</span>
-      <span class="tool-result-status">${success ? 'Success' : 'Failed'}</span>
+      <span class="tool-result-status">${summary}</span>
+      <span class="tool-toggle-icon" id="${outputId}-icon">▼</span>
     </div>
-    <div class="tool-result-output"><pre><code>${escapeHtml(truncated)}</code></pre></div>
+    <div class="tool-result-output collapsed" id="${outputId}">
+      <pre><code>${escapeHtml(outputStr)}</code></pre>
+    </div>
   `;
   container.appendChild(el);
   scrollToBottom();
@@ -936,11 +989,30 @@ function sendMessage() {
   streamEl = null;
   currentAssistantBubble = null;
 
+  // Toggle buttons: hide Send, show Stop
+  document.getElementById('send-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'flex';
+
   ws.send(JSON.stringify({
     type: 'chat',
     content: text,
     parallel: document.getElementById('parallel-toggle').checked,
   }));
+}
+
+function stopMessage() {
+  if (!wsReady) return;
+
+  // Send stop message to server
+  ws.send(JSON.stringify({ type: 'stop' }));
+
+  // Reset UI
+  document.getElementById('stop-btn').style.display = 'none';
+  document.getElementById('send-btn').style.display = 'flex';
+  setSendEnabled(true);
+  isThinking = false;
+
+  showToast('Stopping...', 'thinking');
 }
 
 function onKeyDown(e) {
@@ -1143,6 +1215,20 @@ function showToast(msg, type = '') {
   t.textContent = msg;
   t.className = `show ${type}`;
   setTimeout(() => t.className = '', 3000);
+}
+
+function toggleToolOutput(id) {
+  const el = document.getElementById(id);
+  const icon = document.getElementById(`${id}-icon`);
+  if (!el || !icon) return;
+  
+  if (el.classList.contains('collapsed')) {
+    el.classList.remove('collapsed');
+    icon.textContent = '▲';
+  } else {
+    el.classList.add('collapsed');
+    icon.textContent = '▼';
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────

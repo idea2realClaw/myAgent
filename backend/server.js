@@ -177,6 +177,10 @@ wss.on('connection', (ws) => {
     } else if (msg.type === 'reload_skills') {
       skillLoader.load();
       broadcast(ws, { type: 'skills_reloaded', skills: skillLoader.getAll() });
+    } else if (msg.type === 'stop') {
+      // Set stop flag for this session
+      session.stopRequested = true;
+      broadcast(ws, { type: 'stopped', message: 'Task stopped by user' });
     }
   });
 
@@ -273,7 +277,7 @@ async function handleChat(sessionId, session, msg) {
 
   const orchestrator = new TaskOrchestrator(llm, (event) => {
     broadcast(ws, event);
-  });
+  }, () => session.stopRequested);
 
   try {
     // Step 1: Decompose task

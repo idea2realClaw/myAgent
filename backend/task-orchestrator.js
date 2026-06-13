@@ -7,9 +7,10 @@
 import { executeTool, buildToolInstructions } from './tool-executor.js';
 
 export class TaskOrchestrator {
-  constructor(llmAdapter, onProgress) {
+  constructor(llmAdapter, onProgress, shouldStop) {
     this.llm = llmAdapter;
     this.onProgress = onProgress || (() => {});
+    this.shouldStop = shouldStop || (() => false);
   }
 
   /**
@@ -90,6 +91,12 @@ User request: "${userRequest}"`;
 
     while (toolLoopCount < MAX_TOOL_LOOPS) {
       toolLoopCount++;
+
+      // Check if stop requested
+      if (this.shouldStop()) {
+        return { success: false, error: 'Task stopped by user', partial: result };
+      }
+
       let llmResponse = '';
 
       // Stream LLM response, collecting full text
