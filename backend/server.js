@@ -134,6 +134,38 @@ app.get('/api/skills/:name', (req, res) => {
   res.json({ name: req.params.name, content });
 });
 
+// Enable a skill
+app.post('/api/skills/:name/enable', (req, res) => {
+  skillLoader.enable(req.params.name);
+  res.json({ success: true, enabled: true });
+});
+
+// Disable a skill
+app.post('/api/skills/:name/disable', (req, res) => {
+  skillLoader.disable(req.params.name);
+  res.json({ success: true, enabled: false });
+});
+
+// Scan directory for skills
+app.post('/api/skills/scan', (req, res) => {
+  const { directory } = req.body;
+  if (!directory) return res.status(400).json({ error: 'directory required' });
+  
+  const result = skillLoader.scanDirectory(directory);
+  res.json(result);
+});
+
+// Add skill from directory
+app.post('/api/skills/add', (req, res) => {
+  const { sourcePath, targetDir } = req.body;
+  if (!sourcePath || !targetDir) {
+    return res.status(400).json({ error: 'sourcePath and targetDir required' });
+  }
+  
+  const result = skillLoader.addSkillFromPath(sourcePath, targetDir);
+  res.json(result);
+});
+
 // Identity status
 app.get('/api/identity', (req, res) => {
   res.json(identity.getSummary());

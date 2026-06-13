@@ -90,12 +90,48 @@
     /* Skills list */
     #skills-list { overflow-y: auto; flex: 1; padding: 8px; }
     .skill-item {
-      padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer;
+      padding: 8px 10px; border-radius: var(--radius-sm); cursor: default;
       margin-bottom: 4px; transition: background 0.15s;
+      border: 1px solid transparent;
     }
-    .skill-item:hover { background: var(--bg4); }
+    .skill-item:hover { background: var(--bg4); border-color: var(--border); }
+    .skill-item.disabled { opacity: 0.5; }
+    .skill-item .skill-header { display: flex; align-items: center; justify-content: space-between; }
     .skill-item .skill-name { font-size: 13px; font-weight: 600; color: var(--accent2); }
     .skill-item .skill-desc { font-size: 11px; color: var(--text2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    
+    /* Toggle switch */
+    .skill-toggle {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+    }
+    .skill-toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--bg4);
+      border: 1px solid var(--border);
+      transition: .2s;
+      border-radius: 20px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: var(--text3);
+      transition: .2s;
+      border-radius: 50%;
+    }
+    input:checked + .toggle-slider { background-color: var(--accent); border-color: var(--accent); }
+    input:checked + .toggle-slider:before { transform: translateX(16px); background-color: #fff; }
+    
+    .skill-path { font-size: 10px; color: var(--text3); margin-top: 4px; word-break: break-all; }
 
     /* Identity status */
     .identity-files { display: flex; flex-direction: column; gap: 6px; }
@@ -416,16 +452,19 @@
 
     <!-- Skills tab -->
     <div class="tab-content active" id="tab-skills" style="overflow:hidden;flex:1">
-      <div class="sidebar-section" style="padding-bottom:8px">
-        <h3>Available Skills</h3>
+      <div class="sidebar-section" style="padding-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+        <h3 style="margin:0">Available Skills</h3>
+        <button onclick="showAddSkillDialog()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--accent2);cursor:pointer;font-size:11px;font-weight:600">
+          + Add from Dir
+        </button>
       </div>
       <div id="skills-list">
         <div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">
           Loading skills...
         </div>
       </div>
-      <div style="padding:10px 12px;border-top:1px solid var(--border)">
-        <button onclick="reloadSkills()" style="width:100%;padding:6px;border-radius:6px;border:1px dashed var(--border);background:none;color:var(--text3);cursor:pointer;font-size:12px">
+      <div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px">
+        <button onclick="reloadSkills()" style="flex:1;padding:6px;border-radius:6px;border:1px dashed var(--border);background:none;color:var(--text3);cursor:pointer;font-size:12px">
           ↻ Reload Skills
         </button>
       </div>
@@ -790,7 +829,7 @@ function renderToolCall(tool, args) {
     <div class="tool-call-header" onclick="toggleToolOutput('${argsId}')">
       <span class="tool-icon">🔧</span>
       <span class="tool-name">${summary}</span>
-      <span class="tool-toggle-icon" id="${argsId}-icon">▼</span>
+      <span class="tool-toggle-icon" id="${argsId}-icon">▶</span>
     </div>
     <div class="tool-call-args collapsed" id="${argsId}">
       ${argsHtml}
@@ -807,6 +846,10 @@ function renderToolResult(success, output) {
 
   // Generate summary
   let summary = success ? 'Success' : 'Failed';
+  
+  // Handle null/undefined output
+  const safeOutput = output == null ? '(no output)' : output;
+  
   if (success && output) {
     if (typeof output === 'object' && output.entries) {
       summary = `Success - ${output.entries.length} entries`;
@@ -820,14 +863,14 @@ function renderToolResult(success, output) {
     summary = `Failed - ${errorMsg.slice(0, 50)}`;
   }
 
-  const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+  const outputStr = typeof safeOutput === 'string' ? safeOutput : JSON.stringify(safeOutput, null, 2);
   const outputId = `tool-output-${Date.now()}`;
 
   el.innerHTML = `
     <div class="tool-result-header" onclick="toggleToolOutput('${outputId}')">
       <span class="tool-result-icon">${success ? '✅' : '❌'}</span>
       <span class="tool-result-status">${summary}</span>
-      <span class="tool-toggle-icon" id="${outputId}-icon">▼</span>
+      <span class="tool-toggle-icon" id="${outputId}-icon">▶</span>
     </div>
     <div class="tool-result-output collapsed" id="${outputId}">
       <pre><code>${escapeHtml(outputStr)}</code></pre>
@@ -971,8 +1014,9 @@ function scrollToBottom() {
 }
 
 function escapeHtml(text) {
+  if (!text) return '';
   return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/\n/g,'<br>');
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // ── Input ───────────────────────────────────────────────────
@@ -1153,7 +1197,7 @@ function loadSkills() {
 
 function renderSkills(skills) {
   const list = document.getElementById('skills-list');
-  if (!skills.length) {
+  if (!skills || !skills.length) {
     list.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
       No skills found.<br><br>
       Add skills to:<br><code style="font-size:10px">.claude/skills/name/SKILL.md</code>
@@ -1161,11 +1205,142 @@ function renderSkills(skills) {
     return;
   }
   list.innerHTML = skills.map(s => `
-    <div class="skill-item" onclick="useSkill('${s.name}')">
-      <div class="skill-name">⚡ ${s.name}</div>
+    <div class="skill-item ${s.enabled === false ? 'disabled' : ''}">
+      <div class="skill-header">
+        <div class="skill-name">⚡ ${s.name}</div>
+        <label class="skill-toggle">
+          <input type="checkbox" ${s.enabled !== false ? 'checked' : ''} 
+            onchange="toggleSkill('${s.name}', this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
       <div class="skill-desc">${s.description}</div>
+      <div class="skill-path" style="font-size:10px;color:var(--text3);margin-top:4px">${s.path || ''}</div>
     </div>
   `).join('');
+}
+
+function toggleSkill(name, enabled) {
+  const endpoint = enabled ? 'enable' : 'disable';
+  fetch(`/api/skills/${name}/${endpoint}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(() => {
+      showToast(`Skill "${name}" ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    })
+    .catch(() => showToast(`Failed to ${enabled ? 'enable' : 'disable'} skill`, 'error'));
+}
+
+// Add skill from directory related functions
+function showAddSkillDialog() {
+  const html = `
+    <div id="add-skill-dialog" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;width:500px;max-width:90vw">
+        <h3 style="margin:0 0 16px;color:var(--text)">Add Skill from Directory</h3>
+        
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div>
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Source Directory (containing SKILL.md)</label>
+            <input type="text" id="skill-source-path" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder="/path/to/skills/my-skill" />
+          </div>
+          
+          <div>
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Target Directory (to copy skill to)</label>
+            <input type="text" id="skill-target-dir" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder=".claude/skills" />
+          </div>
+          
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button onclick="scanSkillDirectory()" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size:13px">
+              🔍 Scan Directory
+            </button>
+            <button onclick="addSkillFromDirectory()" style="flex:1;padding:8px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600">
+              ➕ Add Skill
+            </button>
+          </div>
+          
+          <div id="skill-scan-result" style="margin-top:8px;max-height:200px;overflow-y:auto"></div>
+        </div>
+        
+        <button onclick="closeAddSkillDialog()" style="margin-top:16px;padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:13px;float:right">
+          Close
+        </button>
+        <div style="clear:both"></div>
+      </div>
+    </div>
+  `;
+  
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeAddSkillDialog() {
+  const dialog = document.getElementById('add-skill-dialog');
+  if (dialog) dialog.remove();
+}
+
+function scanSkillDirectory() {
+  const dirPath = document.getElementById('skill-source-path').value.trim();
+  if (!dirPath) {
+    showToast('Please enter a directory path', 'error');
+    return;
+  }
+  
+  fetch('/api/skills/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ directory: dirPath }),
+  })
+    .then(r => r.json())
+    .then(result => {
+      const container = document.getElementById('skill-scan-result');
+      if (result.error) {
+        container.innerHTML = `<div style="padding:8px;color:var(--red);font-size:12px">${result.error}</div>`;
+        return;
+      }
+      
+      if (!result.skills || !result.skills.length) {
+        container.innerHTML = `<div style="padding:8px;color:var(--text3);font-size:12px">No skills found in directory</div>`;
+        return;
+      }
+      
+      container.innerHTML = `
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Found ${result.skills.length} skill(s):</div>
+        ${result.skills.map(s => `
+          <div style="padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:4px;font-size:12px">
+            <div style="font-weight:600;color:var(--text)">${s.name}</div>
+            <div style="color:var(--text2);font-size:11px">${s.description}</div>
+            ${s.alreadyLoaded ? '<div style="color:var(--green);font-size:10px;margin-top:2px">Already loaded</div>' : ''}
+          </div>
+        `).join('')}
+      `;
+    })
+    .catch(() => showToast('Failed to scan directory', 'error'));
+}
+
+function addSkillFromDirectory() {
+  const sourcePath = document.getElementById('skill-source-path').value.trim();
+  const targetDir = document.getElementById('skill-target-dir').value.trim();
+  
+  if (!sourcePath || !targetDir) {
+    showToast('Please fill in all fields', 'error');
+    return;
+  }
+  
+  fetch('/api/skills/add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourcePath, targetDir }),
+  })
+    .then(r => r.json())
+    .then(result => {
+      if (result.error) {
+        showToast(result.error, 'error');
+        return;
+      }
+      
+      showToast(`Skill "${result.name}" added successfully!`, 'success');
+      closeAddSkillDialog();
+      loadSkills(); // Reload skills list
+    })
+    .catch(() => showToast('Failed to add skill', 'error'));
 }
 
 function useSkill(name) {
@@ -1223,11 +1398,13 @@ function toggleToolOutput(id) {
   if (!el || !icon) return;
   
   if (el.classList.contains('collapsed')) {
+    // Currently collapsed, expand
     el.classList.remove('collapsed');
-    icon.textContent = '▲';
-  } else {
-    el.classList.add('collapsed');
     icon.textContent = '▼';
+  } else {
+    // Currently expanded, collapse
+    el.classList.add('collapsed');
+    icon.textContent = '▶';
   }
 }
 

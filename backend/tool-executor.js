@@ -55,18 +55,25 @@ async function shellExecute({ command, workdir }) {
 }
 
 async function webFetch({ url, prompt }) {
+  let controller;
+  let timeout;
+  
   try {
     // Use node's built-in fetch (Node 18+)
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), 15000);
 
+    console.log(`[webFetch] Fetching: ${url}`);
+    
     const resp = await fetch(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Agent-WebUI/1.0.0',
       },
     });
+    
     clearTimeout(timeout);
+    console.log(`[webFetch] Response status: ${resp.status}`);
 
     const contentType = resp.headers.get('content-type') || '';
     let content;
@@ -89,8 +96,11 @@ async function webFetch({ url, prompt }) {
       result += `\n\nAnalysis request: ${prompt}`;
     }
 
+    console.log(`[webFetch] Success, content length: ${result.length}`);
     return { success: true, content: result.slice(0, 100000) };
   } catch (err) {
+    console.error(`[webFetch] Error: ${err.message}`);
+    if (timeout) clearTimeout(timeout);
     return {
       success: false,
       error: `web_fetch failed: ${err.message}`,
