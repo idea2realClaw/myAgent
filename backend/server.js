@@ -44,6 +44,58 @@ function saveConfig(cfg) {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
+// ── Status cache (for heartbeat) ──────────────────────
+let statusCache = {
+  backend: 'ok',
+  backendVersion: '1.0.0',
+  model: 'unknown',
+  modelMessage: 'Not checked yet',
+  lastChecked: null,
+};
+
+async function checkModelConnection(config) {
+  if (!config.apiKey) {
+    return { status: 'error', message: 'No API key configured' };
+  }
+  const baseURL = config.baseURL || (config.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1');
+  const url = `${baseURL.replace(/\/+$/, '')}/models`;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const resp = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${config.apiKey}` },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (resp.ok) {
+      return { status: 'ok', message: 'Model API reachable' };
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      return { status: 'ok', message: 'Model API reachable (auth required)' };
+    }
+    return { status: 'error', message: `Model API returned ${resp.status}` };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return { status: 'error', message: 'Model API timeout' };
+    }
+    return { status: 'error', message: `Model API unreachable: ${err.message}` };
+  }
+}
+
+async function refreshStatus() {
+  const cfg = loadConfig();
+  const modelCheck = await checkModelConnection(cfg);
+  statusCache = {
+    backend: 'ok',
+    backendVersion: '1.0.0',
+    model: modelCheck.status,
+    modelMessage: modelCheck.message,
+    lastChecked: new Date().toISOString(),
+  };
+  return statusCache;
+}
+
+
 // ── App init ─────────────────────────────────────────
 const app = express();
 const server = createServer(app);
@@ -96,9 +148,23 @@ function buildSystemPrompt() {
 
 // ── REST API ─────────────────────────────────────────
 
-// Health check
+// Health check (lightweight, no external calls)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
+});
+
+// Detailed status check (includes model connectivity)
+app.get('/api/status', async (req, res) => {
+  // If cache is fresh (< 30s), return it
+  if (statusCache.lastChecked) {
+    const age = Date.now() - new Date(statusCache.lastChecked).getTime();
+    if (age < 30000) {
+      return res.json(statusCache);
+    }
+  }
+  // Otherwise refresh
+  const status = await refreshStatus();
+  res.json(status);
 });
 
 // Get config (API keys masked)

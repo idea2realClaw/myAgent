@@ -61,6 +61,7 @@
       transition: background 0.3s;
     }
     #topbar .status-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    #topbar .status-dot.degraded { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
     #topbar .status-text { font-size: 12px; color: var(--text2); }
     #topbar .provider-badge {
       padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
@@ -612,11 +613,13 @@ function connect() {
   ws.onopen = () => {
     wsReady = true;
     setStatus('connected', 'Connected');
+    startHeartbeat();
   };
 
   ws.onclose = () => {
     wsReady = false;
     setStatus('disconnected', 'Disconnected');
+    stopHeartbeat();
     setTimeout(connect, 2000);
   };
 
@@ -638,6 +641,64 @@ function setStatus(state, text) {
   const txt = document.getElementById('status-text');
   dot.className = `status-dot ${state === 'connected' ? 'connected' : ''}`;
   txt.textContent = text;
+}
+
+// ── Heartbeat ──────────────────────────────────────
+let heartBeatInterval = null;
+
+function startHeartbeat() {
+  stopHeartbeat();
+  
+  async function doHeartbeat() {
+    try {
+      const resp = await fetch('/api/status');
+      if (!resp.ok) {
+        updateStatusUI('error', 'Status check failed');
+        return;
+      }
+      const status = await resp.json();
+      updateStatusFromStatus(status);
+    } catch {
+      updateStatusUI('error', 'Backend unreachable');
+    }
+  }
+  
+  doHeartbeat();
+  heartBeatInterval = setInterval(doHeartbeat, 60000);
+}
+
+function stopHeartbeat() {
+  if (heartBeatInterval) {
+    clearInterval(heartBeatInterval);
+    heartBeatInterval = null;
+  }
+}
+
+function updateStatusFromStatus(status) {
+  let overall = 'connected';
+  let parts = [];
+  
+  // Backend (always ok if we got here)
+  parts.push('Backend: ✅');
+  
+  // Model
+  if (status.model === 'ok') {
+    parts.push('Model: ✅');
+  } else if (status.model === 'error') {
+    parts.push('Model: ⚠️ ' + (status.modelMessage || 'error'));
+    overall = 'degraded';
+  } else {
+    parts.push('Model: ⏳ ' + (status.modelMessage || ''));
+  }
+  
+  updateStatusUI(overall, parts.join(' | '));
+}
+
+function updateStatusUI(state, text) {
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  dot.className = `status-dot ${state === 'connected' ? 'connected' : state === 'degraded' ? 'degraded' : ''}`;
+  txt.textContent = text || state;
 }
 
 // ── Message Handler ─────────────────────────────────────────
