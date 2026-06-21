@@ -429,9 +429,9 @@ app.get('/api/channels/feishu/config', (req, res) => {
   const status = getFeishuStatus();
   res.json({
     enabled: feishuConfig.enabled,
-    appId: feishuConfig.appId ? '***' : '',
+    appId: feishuConfig.appId || '',  // Don't mask App ID (not a secret)
     hasAppSecret: !!feishuConfig.appSecret,
-    verificationToken: feishuConfig.verificationToken ? '***' : '',
+    verificationToken: feishuConfig.verificationToken || '',  // Don't mask (not a secret)
     hasEncryptKey: !!feishuConfig.encryptKey,
     domain: feishuConfig.domain,
     status,
@@ -783,7 +783,8 @@ process.on('SIGUSR1', () => {
 // Feishu Channel Initialization
 // ============================================================
 
-const feishuConfig = loadFeishuConfig();
+// feishuConfig is imported as live binding from feishu.js
+// It will auto-update when saveFeishuConfig() is called
 if (feishuConfig?.enabled) {
   console.log('[Feishu] Channel enabled, client will be initialized when needed');
 }

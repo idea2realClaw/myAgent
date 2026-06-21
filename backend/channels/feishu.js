@@ -17,7 +17,7 @@ const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
 // ============================================================
 
 let feishuConfig = {
-  enabled: false,
+  enabled: true,  // Default: enable Feishu channel
   appId: '',
   appSecret: '',
   verificationToken: '',
@@ -69,6 +69,7 @@ async function getTenantAccessToken() {
   }
 
   if (!feishuConfig.appId || !feishuConfig.appSecret) {
+    console.error('[Feishu] Missing credentials:', { appId: feishuConfig.appId, hasSecret: !!feishuConfig.appSecret });
     throw new Error('Feishu appId and appSecret not configured');
   }
 

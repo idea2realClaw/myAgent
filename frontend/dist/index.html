@@ -1533,7 +1533,6 @@ function saveFeishuConfig() {
   }).then(r => r.json()).then(result => {
     if (result.success) {
       showToast('飞书配置已保存', 'success');
-      loadFeishuConfig(); // Reload to update status
     } else {
       showToast('保存失败: ' + (result.error || '未知错误'), 'error');
     }
