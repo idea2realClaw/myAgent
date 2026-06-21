@@ -18,7 +18,7 @@ import { SkillLoader } from './skill-loader.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
 import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI } from './tool-executor.js';
-import { loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus } from './channels/feishu.js';
+import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus } from './channels/feishu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
