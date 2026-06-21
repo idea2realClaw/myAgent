@@ -18,6 +18,7 @@ import { SkillLoader } from './skill-loader.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
 import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI } from './tool-executor.js';
+import { loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus } from './channels/feishu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -408,6 +409,49 @@ app.get('/api/files/list', (req, res) => {
 });
 
 // ============================================================
+// Feishu Channel API
+// ============================================================
+
+// Feishu webhook endpoint
+app.post('/api/channels/feishu/webhook', createWebhookMiddleware());
+
+// Get Feishu config
+app.get('/api/channels/feishu/config', (req, res) => {
+  const status = getFeishuStatus();
+  res.json({
+    enabled: feishuConfig.enabled,
+    appId: feishuConfig.appId ? '***' : '',
+    hasAppSecret: !!feishuConfig.appSecret,
+    verificationToken: feishuConfig.verificationToken ? '***' : '',
+    hasEncryptKey: !!feishuConfig.encryptKey,
+    domain: feishuConfig.domain,
+    status,
+  });
+});
+
+// Update Feishu config
+app.post('/api/channels/feishu/config', async (req, res) => {
+  const { enabled, appId, appSecret, verificationToken, encryptKey, domain } = req.body;
+  
+  const updates = {};
+  if (enabled !== undefined) updates.enabled = enabled;
+  if (appId !== undefined) updates.appId = appId;
+  if (appSecret !== undefined && appSecret !== '***') updates.appSecret = appSecret;
+  if (verificationToken !== undefined) updates.verificationToken = verificationToken;
+  if (encryptKey !== undefined && encryptKey !== '***') updates.encryptKey = encryptKey;
+  if (domain !== undefined) updates.domain = domain;
+  
+  saveFeishuConfig(updates);
+  
+  // Re-initialize if needed
+  if (updates.enabled) {
+    loadFeishuConfig();
+  }
+  
+  res.json({ success: true, status: getFeishuStatus() });
+});
+
+// ============================================================
 // WebSocket handler
 // ============================================================
 
@@ -724,6 +768,52 @@ process.on('SIGUSR1', () => {
   gracefulShutdown('SIGUSR1').then(() => {
     // Daemon will restart us
   });
+});
+
+// ============================================================
+// Feishu Channel Initialization
+// ============================================================
+
+loadFeishuConfig();
+if (feishuConfig.enabled) {
+  console.log('[Feishu] Channel enabled, client will be initialized when needed');
+}
+
+// Set up message processor for Feishu
+setMessageProcessor(async (message, context) => {
+  console.log('[Feishu] Processing message:', message);
+  
+  const config = loadConfig();
+  const llmConfig = {
+    provider: config.provider || 'qgenie',
+    apiKey: config.apiKey,
+    model: config.model,
+    baseURL: config.baseURL || undefined,
+  };
+  
+  const llm = new LLMAdapter(llmConfig);
+  const system = buildSystemPrompt(config.provider);
+  
+  const orchestrator = new TaskOrchestrator(llm, (event) => {
+    console.log('[Feishu] Orchestrator event:', event.type);
+  }, () => false);
+  
+  try {
+    const plan = await orchestrator.decompose(message, system);
+    const results = await orchestrator.executeAll(plan, { system, history: [] }, (taskId, chunk) => {});
+    
+    let finalAnswer;
+    if (results.length === 1) {
+      finalAnswer = results[0].result;
+    } else {
+      finalAnswer = await orchestrator.synthesize(message, results, { system, history: [] });
+    }
+    
+    return finalAnswer;
+  } catch (err) {
+    console.error('[Feishu] Error processing message:', err);
+    return `处理失败: ${err.message}`;
+  }
 });
 
 // ============================================================

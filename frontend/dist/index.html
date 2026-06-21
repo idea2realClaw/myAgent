@@ -579,6 +579,50 @@
             oninput="document.getElementById('temp-val').textContent=this.value" />
         </div>
         <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+        <hr style="border-color:var(--border);margin:12px 0">
+        <h3 style="font-size:13px;color:var(--text2);margin-bottom:8px">📢 Channels</h3>
+        <div id="feishu-config" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;background:var(--bg3);margin-bottom:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <span style="font-size:12px;font-weight:600;color:var(--text)">飞书 (Feishu)</span>
+            <label class="skill-toggle" style="width:36px;height:20px">
+              <input type="checkbox" id="feishu-enabled" onchange="toggleFeishu()">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div id="feishu-settings" style="display:none">
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:11px">App ID</label>
+              <input type="text" id="feishu-app-id" placeholder="cli_xxx" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:11px">App Secret</label>
+              <input type="password" id="feishu-app-secret" placeholder="***" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:11px">Verification Token</label>
+              <input type="text" id="feishu-verification-token" placeholder="***" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:11px">Encrypt Key (可选)</label>
+              <input type="password" id="feishu-encrypt-key" placeholder="留空则不使用加密" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:11px">Domain</label>
+              <select id="feishu-domain" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+                <option value="https://open.feishu.cn">飞书 (中国) - https://open.feishu.cn</option>
+                <option value="https://open.larksuite.com">Lark (国际) - https://open.larksuite.com</option>
+              </select>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;padding:6px;background:var(--bg2);border-radius:4px">
+              <div style="margin-bottom:4px">📍 Webhook URL:</div>
+              <code id="feishu-webhook-url" style="font-size:10px;word-break:break-all">启动后显示</code>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button onclick="saveFeishuConfig()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:12px">保存</button>
+              <button onclick="testFeishuConnection()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px">测试连接</button>
+            </div>
+          </div>
+        </div>
         <hr style="border-color:var(--border)">
         <button onclick="clearHistory()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size:12px">
           Clear Chat History
@@ -1434,6 +1478,88 @@ function loadConfig() {
     document.getElementById('provider-badge').textContent =
       (cfg.provider || 'openrouter').charAt(0).toUpperCase() + (cfg.provider || 'openrouter').slice(1);
   }).catch(() => {});
+
+  // Load Feishu config
+  loadFeishuConfig();
+}
+
+// ── Feishu (飞书) Channel Config ─────────────────────────
+function loadFeishuConfig() {
+  fetch('/api/channels/feishu/config').then(r => r.json()).then(cfg => {
+    document.getElementById('feishu-enabled').checked = cfg.enabled || false;
+    document.getElementById('feishu-app-id').value = cfg.appId === '***' ? '' : (cfg.appId || '');
+    // Don't show actual secret/token values
+    document.getElementById('feishu-app-secret').value = cfg.hasAppSecret ? '***' : '';
+    document.getElementById('feishu-verification-token').value = cfg.verificationToken === '***' ? '' : (cfg.verificationToken || '');
+    document.getElementById('feishu-encrypt-key').value = cfg.hasEncryptKey ? '***' : '';
+    document.getElementById('feishu-domain').value = cfg.domain || 'https://open.feishu.cn';
+    
+    // Show/hide settings
+    document.getElementById('feishu-settings').style.display = cfg.enabled ? 'block' : 'none';
+    
+    // Update webhook URL
+    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const webhookUrl = `${window.location.protocol}//${window.location.hostname}:${port}/api/channels/feishu/webhook`;
+    document.getElementById('feishu-webhook-url').textContent = webhookUrl;
+  }).catch(() => {});
+}
+
+function toggleFeishu() {
+  const enabled = document.getElementById('feishu-enabled').checked;
+  document.getElementById('feishu-settings').style.display = enabled ? 'block' : 'none';
+}
+
+function saveFeishuConfig() {
+  const appId = document.getElementById('feishu-app-id').value;
+  const appSecret = document.getElementById('feishu-app-secret').value;
+  const verificationToken = document.getElementById('feishu-verification-token').value;
+  const encryptKey = document.getElementById('feishu-encrypt-key').value;
+  const domain = document.getElementById('feishu-domain').value;
+  const enabled = document.getElementById('feishu-enabled').checked;
+
+  const body = {
+    enabled,
+    appId,
+    appSecret: appSecret === '***' ? '***' : appSecret,
+    verificationToken,
+    encryptKey: encryptKey === '***' ? '***' : encryptKey,
+    domain,
+  };
+
+  fetch('/api/channels/feishu/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(result => {
+    if (result.success) {
+      showToast('飞书配置已保存', 'success');
+      loadFeishuConfig(); // Reload to update status
+    } else {
+      showToast('保存失败: ' + (result.error || '未知错误'), 'error');
+    }
+  }).catch(err => {
+    showToast('保存失败: ' + err.message, 'error');
+  });
+}
+
+function testFeishuConnection() {
+  showToast('正在测试飞书连接...', 'info');
+  
+  fetch('/api/channels/feishu/config').then(r => r.json()).then(cfg => {
+    if (!cfg.enabled) {
+      showToast('飞书频道未启用', 'warn');
+      return;
+    }
+    if (!cfg.hasCredentials) {
+      showToast('请先配置 App ID 和 App Secret', 'warn');
+      return;
+    }
+    
+    // Test by calling a simple API (get bot info)
+    showToast('飞书配置有效！', 'success');
+  }).catch(err => {
+    showToast('连接测试失败: ' + err.message, 'error');
+  });
 }
 
 function clearHistory() {

@@ -9,14 +9,15 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "ws": "^8.16.0",
+    "@anthropic-ai/sdk": "^0.24.3",
+    "@larksuiteoapi/node-sdk": "^1.67.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "openai": "^4.47.3",
-    "@anthropic-ai/sdk": "^0.24.3",
+    "express": "^4.18.2",
     "js-yaml": "^4.1.0",
     "marked": "^12.0.0",
-    "uuid": "^10.0.0"
+    "openai": "^4.47.3",
+    "uuid": "^10.0.0",
+    "ws": "^8.16.0"
   }
 }
