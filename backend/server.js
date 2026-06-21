@@ -450,6 +450,11 @@ wss.on('connection', (ws) => {
       // Set stop flag for this session
       session.stopRequested = true;
       broadcast(ws, { type: 'stopped', message: 'Task stopped by user' });
+    } else if (msg.type === 'restart') {
+      // Request graceful restart (daemon will handle this)
+      broadcast(ws, { type: 'restarting', message: 'Server restarting...' });
+      // Send SIGUSR1 to self (daemon will detect and restart)
+      process.kill(process.pid, 'SIGUSR1');
     } else if (msg.type === 'exec_stream') {
       // Real-time streaming execution
       await handleExecStream(ws, session, msg);
@@ -656,6 +661,69 @@ app.get('*', (req, res) => {
   } else {
     res.status(404).send('Frontend not built yet.');
   }
+});
+
+// ============================================================
+// Graceful Shutdown
+// ============================================================
+
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) {
+    console.log(`[Shutdown] Already shutting down, ignoring ${signal}`);
+    return;
+  }
+
+  isShuttingDown = true;
+  console.log(`\n[Shutdown] Received ${signal}, starting graceful shutdown...`);
+
+  // Notify all clients
+  const shutdownMsg = { type: 'server_shutdown', message: 'Server is restarting, please wait...' };
+  for (const [sessionId, session] of sessions) {
+    try {
+      if (session.ws.readyState === session.ws.OPEN) {
+        session.ws.send(JSON.stringify(shutdownMsg));
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Close WebSocket server (stop accepting new connections)
+  wss.close(() => {
+    console.log('[Shutdown] WebSocket server closed');
+  });
+
+  // Close all WebSocket connections
+  for (const [sessionId, session] of sessions) {
+    try {
+      session.ws.close(1001, 'Server restarting');
+    } catch { /* ignore */ }
+  }
+  sessions.clear();
+
+  // Close HTTP server
+  server.close(() => {
+    console.log('[Shutdown] HTTP server closed');
+    process.exit(0);
+  });
+
+  // Force exit after timeout
+  setTimeout(() => {
+    console.log('[Shutdown] Force exiting after timeout');
+    process.exit(1);
+  }, 30000);
+}
+
+// Handle shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle restart request from daemon
+process.on('SIGUSR1', () => {
+  console.log('\n[Restart] Received SIGUSR1, initiating graceful restart...');
+  gracefulShutdown('SIGUSR1').then(() => {
+    // Daemon will restart us
+  });
 });
 
 // ============================================================

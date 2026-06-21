@@ -583,6 +583,10 @@
         <button onclick="clearHistory()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size:12px">
           Clear Chat History
         </button>
+        <hr style="border-color:var(--border);margin-top:12px">
+        <button onclick="restartServer()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--accent);background:none;color:var(--accent);cursor:pointer;font-size:12px">
+          🔄 Restart Server
+        </button>
       </div>
     </div>
   </nav>
@@ -853,6 +857,18 @@ function handleMessage(msg) {
     document.getElementById('messages').innerHTML = '';
     showWelcome();
     showToast('History cleared', 'success');
+  }
+
+  else if (type === 'restarting') {
+    showToast(msg.message || 'Server restarting...', 'info');
+    // Disable input while restarting
+    document.getElementById('prompt-input').disabled = true;
+    document.getElementById('send-btn').disabled = true;
+  }
+
+  else if (type === 'server_shutdown') {
+    showToast(msg.message || 'Server is restarting, please wait...', 'info');
+    setStatus('disconnected', 'Restarting');
   }
 
   // ── Real-time command execution events ─────────
@@ -1423,6 +1439,16 @@ function loadConfig() {
 function clearHistory() {
   if (!wsReady) return;
   ws.send(JSON.stringify({ type: 'clear_history' }));
+}
+
+function restartServer() {
+  if (!wsReady) {
+    showToast('Not connected to server', 'error');
+    return;
+  }
+  if (!confirm('Restart server? This will disconnect all clients.')) return;
+  showToast('Restarting server...', 'info');
+  ws.send(JSON.stringify({ type: 'restart' }));
 }
 
 // ── Skills ──────────────────────────────────────────────────
