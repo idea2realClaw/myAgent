@@ -783,8 +783,8 @@ process.on('SIGUSR1', () => {
 // Feishu Channel Initialization
 // ============================================================
 
-loadFeishuConfig();
-if (feishuConfig.enabled) {
+const feishuConfig = loadFeishuConfig();
+if (feishuConfig?.enabled) {
   console.log('[Feishu] Channel enabled, client will be initialized when needed');
 }
 
