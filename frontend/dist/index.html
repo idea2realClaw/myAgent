@@ -433,6 +433,39 @@
     .tool-result-output { max-height: 300px; overflow-y: auto; margin-top: 8px; }
     .tool-result-output.collapsed { display: none; }
     .tool-result-output pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
+    /* ── Exec Output Card ────────────────────────── */
+    .exec-output-card {
+      margin: 8px 0 16px 0; border-radius: var(--radius-sm);
+      background: #0a0a0f; border: 1px solid #1a1a2e;
+      font-size: 12px; max-width: 90%; overflow: hidden;
+    }
+    .exec-output-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; cursor: pointer;
+      background: var(--bg3); border-bottom: 1px solid var(--border);
+    }
+    .exec-output-header:hover { background: var(--bg4); }
+    .exec-output-icon { font-size: 14px; }
+    .exec-output-title { font-size: 12px; color: var(--text2); flex: 1; }
+    .exec-output-status { font-size: 11px; font-weight: 600; }
+    .exec-output-status.running { color: var(--accent2); }
+    .exec-output-status.done { color: var(--green); }
+    .exec-output-status.error { color: var(--red); }
+    .exec-output-toggle { font-size: 10px; color: var(--text3); transition: transform 0.2s; }
+    .exec-output-body {
+      max-height: 400px; overflow-y: auto;
+      padding: 10px 12px; font-family: 'SF Mono', 'Monaco', monospace;
+      font-size: 11px; line-height: 1.5; color: #d4d4d8;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .exec-output-body.collapsed { display: none; }
+    .exec-output-body .line-stdout { color: #d4d4d8; }
+    .exec-output-body .line-stderr { color: #f87171; }
+    .exec-output-footer {
+      padding: 4px 12px; font-size: 10px; color: var(--text3);
+      border-top: 1px solid var(--border); background: var(--bg3);
+    }
+
   </style>
 </head>
 <body>
@@ -518,9 +551,11 @@
         <div class="form-group">
           <label>Provider</label>
           <select id="cfg-provider" onchange="onProviderChange()">
+            <option value="qgenie">QGenie</option>
+            <option value="local">Local (GenieAPIService)</option>
             <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic (Claude)</option>
             <option value="openrouter">OpenRouter</option>
+            <option value="anthropic">Anthropic (Claude)</option>
           </select>
         </div>
         <div class="form-group">
@@ -819,6 +854,29 @@ function handleMessage(msg) {
     showWelcome();
     showToast('History cleared', 'success');
   }
+
+  // ── Real-time command execution events ─────────
+  else if (type === 'exec_start') {
+    hideWelcome();
+    renderExecOutputCard(msg.command, 'running');
+  }
+
+  else if (type === 'exec_output') {
+    appendExecOutput(msg.stream, msg.data);
+  }
+
+  else if (type === 'exec_done') {
+    finalizeExecOutput(msg.exitCode, msg.success);
+  }
+
+  else if (type === 'exec_error') {
+    finalizeExecOutput(-1, false, msg.error);
+  }
+
+  // ── History restore ─────────────────────────
+  else if (type === 'history_restored') {
+    showToast(`Restored ${msg.count} history messages`, 'success');
+  }
 }
 
 // ── Render Helpers ──────────────────────────────────────────
@@ -1092,6 +1150,102 @@ function escapeHtml(text) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+
+// ── Exec Output Rendering ──────────────────────
+let currentExecCard = null;
+let currentExecBody = null;
+
+function renderExecOutputCard(command, status) {
+  hideWelcome();
+  const container = document.getElementById('messages');
+  const cardId = `exec-${Date.now()}`;
+  const bodyId = `exec-body-${Date.now()}`;
+
+  const el = document.createElement('div');
+  el.className = 'exec-output-card';
+  el.id = cardId;
+  el.innerHTML = `
+    <div class="exec-output-header" onclick="toggleExecOutput('${bodyId}')">
+      <span class="exec-output-icon">⚡</span>
+      <span class="exec-output-title">${escapeHtml(command || 'Command')}</span>
+      <span class="exec-output-status ${status}">${status === 'running' ? 'Running...' : status}</span>
+      <span class="exec-output-toggle" id="${bodyId}-icon">▶</span>
+    </div>
+    <div class="exec-output-body collapsed" id="${bodyId}"></div>
+    <div class="exec-output-footer" id="${bodyId}-footer" style="display:none"></div>
+  `;
+
+  container.appendChild(el);
+  currentExecCard = cardId;
+  currentExecBody = bodyId;
+  scrollToBottom();
+}
+
+function appendExecOutput(stream, data) {
+  if (!currentExecBody) return;
+  const body = document.getElementById(currentExecBody);
+  if (!body) return;
+
+  const lines = data.split('\n');
+  for (const line of lines) {
+    if (!line) continue;
+    const cls = stream === 'stderr' ? 'line-stderr' : 'line-stdout';
+    const div = document.createElement('div');
+    div.className = cls;
+    div.textContent = line;
+    body.appendChild(div);
+  }
+  scrollToBottom();
+}
+
+function finalizeExecOutput(exitCode, success, errorMsg) {
+  if (!currentExecCard) return;
+
+  const card = document.getElementById(currentExecCard);
+  if (!card) return;
+
+  const statusEl = card.querySelector('.exec-output-status');
+  const footer = document.getElementById(`${currentExecBody}-footer`);
+
+  if (errorMsg) {
+    if (statusEl) {
+      statusEl.textContent = 'Error';
+      statusEl.className = 'exec-output-status error';
+    }
+    if (footer) {
+      footer.style.display = 'block';
+      footer.textContent = `Error: ${errorMsg}`;
+    }
+  } else {
+    if (statusEl) {
+      statusEl.textContent = success ? '✅ Done' : `❌ Failed (${exitCode})`;
+      statusEl.className = `exec-output-status ${success ? 'done' : 'error'}`;
+    }
+    if (footer) {
+      footer.style.display = 'block';
+      footer.textContent = `Exit code: ${exitCode}`;
+    }
+  }
+
+  currentExecCard = null;
+  currentExecBody = null;
+  scrollToBottom();
+}
+
+function toggleExecOutput(id) {
+  const el = document.getElementById(id);
+  const icon = document.getElementById(`${id}-icon`);
+  if (!el || !icon) return;
+
+  if (el.classList.contains('collapsed')) {
+    el.classList.remove('collapsed');
+    icon.textContent = '▼';
+  } else {
+    el.classList.add('collapsed');
+    icon.textContent = '▶';
+  }
+}
+
 // ── Input ───────────────────────────────────────────────────
 function sendMessage() {
   const input = document.getElementById('prompt-input');
@@ -1157,6 +1311,8 @@ function quickPrompt(text) {
 
 // ── Settings ────────────────────────────────────────────────
 const MODELS = {
+  qgenie: ['default', 'qgenie-pro', 'qgenie-lite'],
+  local: ['default', 'local-model-1', 'local-model-2'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o1-mini', 'o3'],
   anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest'],
   openrouter: [
@@ -1175,14 +1331,20 @@ const MODELS = {
 
 // Default model per provider (used when switching providers)
 const DEFAULT_MODELS = {
+  qgenie: 'default',
+  local: 'default',
   openai: 'gpt-4o',
-  anthropic: 'claude-opus-4-5',
+  anthropic: 'claude-opus-4-20250514',
   openrouter: 'nvidia/nemotron-3-super-120b-a12b:free',
 };
 
 // Default base URLs per provider
 const DEFAULT_BASE_URLS = {
+  qgenie: 'https://qgenie.example.com/v1',
+  local: 'http://127.0.0.1:8910/v1',
   openrouter: 'https://openrouter.ai/api/v1',
+  anthropic: '',
+  openai: 'https://api.openai.com/v1',
 };
 
 function onProviderChange(keepModel = false) {
@@ -1201,16 +1363,19 @@ function onProviderChange(keepModel = false) {
   }
 
   // Show/hide base URL field; auto-fill default if field is empty
-  if (p === 'openrouter') {
+  if (p === 'openrouter' || p === 'qgenie' || p === 'local') {
     baseurlGroup.style.display = 'flex';
     if (!baseurlInput.value && !keepModel) {
-      baseurlInput.value = DEFAULT_BASE_URLS.openrouter;
+      baseurlInput.value = DEFAULT_BASE_URLS[p] || '';
     }
   } else {
     baseurlGroup.style.display = 'none';
   }
 
-  document.getElementById('provider-badge').textContent = p.charAt(0).toUpperCase() + p.slice(1);
+  // Update provider badge
+  const badge = document.getElementById('provider-badge');
+  const names = { qgenie: 'QGenie', local: 'Local', openai: 'OpenAI', openrouter: 'OpenRouter', anthropic: 'Anthropic' };
+  badge.textContent = names[p] || p;
 }
 
 function saveSettings() {
