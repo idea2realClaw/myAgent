@@ -1,16 +1,18 @@
 // ============================================================
 // Task Decomposer & Parallel Executor
 // Breaks a complex task into subtasks, runs them concurrently
-// Now supports tool-calling loop (shell, web_fetch, file ops)
+// Now supports Native Function Calling (OpenAI tool_calls)
+// Features: Loop Guard, structured stream events
 // ============================================================
 
-import { executeTool, buildToolInstructions } from './tool-executor.js';
+import { executeTool, buildToolInstructions, TOOL_SCHEMAS_OPENAI, KNOWN_TOOLS } from './tool-executor.js';
 
 export class TaskOrchestrator {
   constructor(llmAdapter, onProgress, shouldStop) {
     this.llm = llmAdapter;
     this.onProgress = onProgress || (() => {});
     this.shouldStop = shouldStop || (() => false);
+    this.useNativeFunctionCalling = llmAdapter.supportsFunctionCalling?.() || false;
   }
 
   /**
@@ -72,11 +74,12 @@ User request: "${userRequest}"`;
 
   /**
    * Execute a single subtask (with tool-calling loop)
+   * Supports Native Function Calling or legacy text-based tool calls
    */
   async executeSubtask(subtask, context, onChunk) {
     // Build conversation messages
     let messages = [
-      { role: 'system', content: context.system + buildToolInstructions() },
+      { role: 'system', content: context.system + buildToolInstructions(this.useNativeFunctionCalling) },
       {
         role: 'user',
         content: `# Task: ${subtask.title}\n\n${subtask.description}\n\n${context.history ? `Previous context:\n${context.history}` : ''}`,
@@ -86,6 +89,10 @@ User request: "${userRequest}"`;
     let result = '';
     let toolLoopCount = 0;
     const MAX_TOOL_LOOPS = 10;
+    
+    // Loop Guard: detect repeated tool calls
+    let lastToolCallKey = null;
+    let repeatCount = 0;
 
     this.onProgress({ type: 'subtask_start', taskId: subtask.id, title: subtask.title });
 
@@ -98,74 +105,128 @@ User request: "${userRequest}"`;
       }
 
       let llmResponse = '';
+      let toolCalls = [];
 
       // Stream LLM response, collecting full text
       this.onProgress({ type: 'subtask_thinking', taskId: subtask.id, loop: toolLoopCount });
-      for await (const chunk of this.llm.stream(messages, { temperature: 0.7 })) {
-        llmResponse += chunk;
-        if (onChunk) onChunk(subtask.id, chunk);
-        this.onProgress({ type: 'subtask_chunk', taskId: subtask.id, chunk });
-      }
-
-      // Detect tool_call block
-      const toolCallMatch = llmResponse.match(/```tool_call\s*\n([\s\S]*?)\n```/);
-      if (!toolCallMatch) {
-        // No tool call → final answer
-        result = llmResponse;
-        break;
-      }
-
-      // Parse tool call JSON
-      let toolCall;
-      try {
-        toolCall = JSON.parse(toolCallMatch[1].trim());
-      } catch {
-        // If JSON parse fails, try extracting from the whole response
-        const jsonMatch = llmResponse.match(/\{[\s\S]*"tool"[\s\S]*\}/);
-        if (jsonMatch) {
-          try { toolCall = JSON.parse(jsonMatch[0]); } catch { /* ignore */ }
+      
+      if (this.useNativeFunctionCalling) {
+        // Native Function Calling mode
+        const streamResult = this._collectStreamWithToolCalls(messages, onChunk, subtask.id);
+        llmResponse = streamResult.text;
+        toolCalls = streamResult.toolCalls;
+      } else {
+        // Legacy mode: stream text, then parse tool_call blocks
+        for await (const chunk of this.llm.stream(messages, { temperature: 0.7 })) {
+          llmResponse += chunk;
+          if (onChunk) onChunk(subtask.id, chunk);
+          this.onProgress({ type: 'subtask_chunk', taskId: subtask.id, chunk });
+        }
+        // Parse legacy tool_call block
+        const legacyCall = this._parseLegacyToolCall(llmResponse);
+        if (legacyCall) {
+          toolCalls = [legacyCall];
         }
       }
 
-      if (!toolCall || !toolCall.tool) {
-        // No valid tool call → treat as final answer
+      // No tool calls → final answer
+      if (toolCalls.length === 0) {
         result = llmResponse;
         break;
       }
 
-      this.onProgress({
-        type: 'tool_call',
-        taskId: subtask.id,
-        tool: toolCall.tool,
-        args: toolCall.arguments,
-      });
+      // Process each tool call
+      for (const toolCall of toolCalls) {
+        const { name, arguments: args } = toolCall;
 
-      // Execute the tool
-      const toolResult = await executeTool({
-        name: toolCall.tool,
-        arguments: toolCall.arguments || {},
-      });
+        // Strict whitelist check
+        if (!KNOWN_TOOLS.has(name)) {
+          this.onProgress({
+            type: 'tool_result',
+            taskId: subtask.id,
+            success: false,
+            output: `Error: Unknown tool "${name}". Available tools: ${Array.from(KNOWN_TOOLS).join(', ')}`,
+          });
+          continue;
+        }
 
-      this.onProgress({
-        type: 'tool_result',
-        taskId: subtask.id,
-        success: toolResult.success,
-        output: toolResult.output.slice(0, 2000), // truncate for display
-      });
+        // Loop Guard: detect repeated calls
+        const callKey = `${name}:${JSON.stringify(args)}`;
+        if (callKey === lastToolCallKey) {
+          repeatCount++;
+          if (repeatCount >= 2) {
+            this.onProgress({
+              type: 'tool_result',
+              taskId: subtask.id,
+              success: false,
+              output: `Error: Repeated tool call detected. Stopping to prevent infinite loop.`,
+            });
+            result = llmResponse + '\n\n[Tool loop detected and prevented]';
+            break;
+          }
+        } else {
+          repeatCount = 0;
+        }
+        lastToolCallKey = callKey;
 
-      // Add assistant response (with tool call) and tool result to messages
-      messages.push({
-        role: 'assistant',
-        content: llmResponse,
-      });
-      messages.push({
-        role: 'user',
-        content: `Tool result (${toolCall.tool}):\n\`\`\`json\n${toolResult.output}\n\`\`\`\n\nContinue with the task. If you have the final answer, provide it. Otherwise, call another tool.`,
-      });
+        this.onProgress({
+          type: 'tool_call',
+          taskId: subtask.id,
+          tool: name,
+          args,
+        });
 
-      // Trim messages to avoid token overflow
-      if (messages.length > 20) {
-        messages = [messages[0], ...messages.slice(-18)];
+        // Execute the tool
+        const toolResult = await executeTool({
+          name,
+          arguments: args || {},
+        });
+
+        this.onProgress({
+          type: 'tool_result',
+          taskId: subtask.id,
+          success: toolResult.success,
+          output: toolResult.output.slice(0, 2000), // truncate for display
+        });
+
+        // Add assistant response (with tool call) and tool result to messages
+        if (this.useNativeFunctionCalling) {
+          // Native mode: add assistant message with tool_calls, then tool result
+          messages.push({
+            role: 'assistant',
+            content: llmResponse,
+            tool_calls: toolCalls.map((tc, i) => ({
+              id: tc.id || `call_${Date.now()}_${i}`,
+              type: 'function',
+              function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+            })),
+          });
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCalls[0].id || `call_${Date.now()}_0`,
+            content: toolResult.output,
+          });
+        } else {
+          // Legacy mode: add text with tool_call block
+          messages.push({
+            role: 'assistant',
+            content: llmResponse,
+          });
+          messages.push({
+            role: 'user',
+            content: `Tool result (${name}):\n\`\`\`json\n${toolResult.output}\n\`\`\`\n\nContinue with the task. If you have the final answer, provide it. Otherwise, call another tool.`,
+          });
+        }
+
+        // Trim messages to avoid token overflow
+        if (messages.length > 20) {
+          messages = [messages[0], ...messages.slice(-18)];
+        }
+      }
+
+      // Check loop guard break
+      if (repeatCount >= 2) {
+        break;
       }
     }
 
@@ -175,6 +236,80 @@ User request: "${userRequest}"`;
 
     this.onProgress({ type: 'subtask_done', taskId: subtask.id, result });
     return { id: subtask.id, title: subtask.title, result, status: 'done' };
+  }
+
+  /**
+   * Collect stream output and detect tool_calls (for native function calling)
+   */
+  async _collectStreamWithToolCalls(messages, onChunk, taskId) {
+    let text = '';
+    let toolCalls = [];
+    let waitingForToolCall = false;
+    let currentToolCall = null;
+
+    // Add tools to messages for this call
+    const llmWithTools = this.llm.withTools?.(TOOL_SCHEMAS_OPENAI) || this.llm;
+
+    try {
+      for await (const event of llmWithTools.stream(messages, {
+        temperature: 0.7,
+        tools: TOOL_SCHEMAS_OPENAI,
+      })) {
+        // Handle structured events
+        if (typeof event === 'object') {
+          if (event.type === 'text') {
+            text += event.content;
+            if (onChunk) onChunk(taskId, event.content);
+            this.onProgress({ type: 'subtask_chunk', taskId, chunk: event.content });
+          } else if (event.type === 'tool_call') {
+            toolCalls.push(event);
+            this.onProgress({ type: 'tool_call', taskId, tool: event.name, args: event.arguments });
+          }
+        } else {
+          // String chunk (legacy)
+          text += event;
+          if (onChunk) onChunk(taskId, event);
+          this.onProgress({ type: 'subtask_chunk', taskId, chunk: event });
+        }
+      }
+    } catch (err) {
+      console.error('Stream error:', err);
+    }
+
+    return { text, toolCalls };
+  }
+
+  /**
+   * Parse legacy tool_call block with strict whitelist
+   */
+  _parseLegacyToolCall(response) {
+    // Only recognize ```tool_call code blocks, not bare JSON in body
+    const toolCallMatch = response.match(/```tool_call\s*\n([\s\S]*?)\n```/);
+    if (!toolCallMatch) {
+      return null;
+    }
+
+    let toolCall;
+    try {
+      toolCall = JSON.parse(toolCallMatch[1].trim());
+    } catch {
+      return null;
+    }
+
+    if (!toolCall || !toolCall.tool) {
+      return null;
+    }
+
+    // Strict whitelist check
+    if (!KNOWN_TOOLS.has(toolCall.tool)) {
+      console.warn(`[Legacy] Unknown tool: ${toolCall.tool}`);
+      return null;
+    }
+
+    return {
+      name: toolCall.tool,
+      arguments: toolCall.arguments || {},
+    };
   }
 
   /**

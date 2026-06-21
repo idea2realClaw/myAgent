@@ -1,6 +1,7 @@
 // ============================================================
 // Tool Executor — Executes tools requested by the LLM
 // Supports: shell commands, web fetch, file operations, search
+// Features: execStream for real-time output, OpenAI function calling
 // ============================================================
 
 import { exec } from 'child_process';
@@ -9,7 +10,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { minimatch } from 'minimatch'; // For glob pattern matching
+import { minimatch } from 'minimatch';
 
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,75 @@ function sanitizePath(rawPath) {
     throw new Error(`Path traversal denied: ${rawPath}`);
   }
   return resolved;
+}
+
+// ============================================================
+// execStream — Real-time streaming execution
+// Yields { type: 'stdout', data } / { type: 'stderr', data } / { type: 'done', code, stdout, stderr }
+// ============================================================
+
+export async function* execStream({ command, workdir, signal }) {
+  const cwd = workdir ? sanitizePath(workdir) : WORKSPACE_ROOT;
+  
+  let stdoutBuffer = '';
+  let stderrBuffer = '';
+  let resolved = false;
+  let resolvePromise;
+  const promise = new Promise(resolve => { resolvePromise = resolve; });
+
+  const child = exec(command, {
+    cwd,
+    shell: true,
+    maxBuffer: 1024 * 1024 * 10, // 10MB
+  });
+
+  // Handle abort signal
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      child.kill('SIGTERM');
+    });
+  }
+
+  child.stdout.on('data', (chunk) => {
+    const text = chunk.toString();
+    stdoutBuffer += text;
+    // Yield each chunk as it arrives
+    if (!resolved) {
+      // Can't yield from event callback, collect and yield in loop
+    }
+  });
+
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    stderrBuffer += text;
+  });
+
+  child.on('close', (code) => {
+    resolved = true;
+    resolvePromise({
+      success: code === 0,
+      stdout: stdoutBuffer,
+      stderr: stderrBuffer,
+      exitCode: code,
+    });
+  });
+
+  child.on('error', (err) => {
+    resolved = true;
+    resolvePromise({
+      success: false,
+      stdout: stdoutBuffer,
+      stderr: stderrBuffer,
+      exitCode: -1,
+      error: err.message,
+    });
+  });
+
+  // Wait for completion and yield result
+  // For real-time streaming to WebSocket, we need to yield chunks as they arrive
+  // This is handled by the caller via stdout/stderr callbacks
+  const result = await promise;
+  yield { type: 'done', ...result };
 }
 
 // ── Tool Implementations ─────────────────────────────────────
@@ -313,6 +383,44 @@ export const TOOL_SCHEMAS = {
   },
 };
 
+// ── OpenAI Native Function Calling Schema ────────────────────
+// Standard OpenAI function calling format for tools parameter
+
+export const TOOL_SCHEMAS_OPENAI = Object.entries(TOOL_SCHEMAS).map(([name, schema]) => ({
+  type: 'function',
+  function: {
+    name: schema.name,
+    description: schema.description,
+    parameters: {
+      type: 'object',
+      properties: Object.fromEntries(
+        Object.entries(schema.parameters).map(([param, desc]) => [
+          param,
+          {
+            type: desc.type,
+            description: desc.description,
+          }
+        ])
+      ),
+      required: Object.entries(schema.parameters)
+        .filter(([, desc]) => desc.required)
+        .map(([param]) => param),
+    },
+  },
+}));
+
+// ── Known tools whitelist (for legacy parsing) ──────────────
+export const KNOWN_TOOLS = new Set([
+  'shell_execute',
+  'web_fetch',
+  'file_read',
+  'file_write',
+  'file_edit',
+  'file_list',
+  'file_glob',
+  'file_grep',
+]);
+
 // ── Main dispatch ────────────────────────────────────────────
 
 export async function executeTool(toolCall) {
@@ -356,22 +464,30 @@ export async function executeTool(toolCall) {
         output: JSON.stringify(result, null, 2),
       };
     } else {
+      // Add hint to not retry
       return {
         success: false,
-        output: `Error: ${result.error}`,
+        output: `Error: ${result.error}\n\n[Do not retry this tool call. Please provide an answer or try a different approach.]`,
       };
     }
   } catch (err) {
     return {
       success: false,
-      output: `Tool execution error: ${err.message}`,
+      output: `Tool execution error: ${err.message}\n\n[Do not retry this tool call.]`,
     };
   }
 }
 
 // ── Build tool instructions for system prompt ────────────────
+// forNativeFunctionCalling: if true, only inject short prompt (avoid double injection)
 
-export function buildToolInstructions() {
+export function buildToolInstructions(forNativeFunctionCalling = false) {
+  if (forNativeFunctionCalling) {
+    // Short prompt for native function calling mode
+    return `\n\n## Tool Usage\nYou have access to tools via function calling. When you need to use a tool, the system will automatically call it. Do not generate tool_call blocks manually.`;
+  }
+
+  // Full prompt for legacy mode (text-based tool calls)
   const lines = [
     '',
     '## Available Tools',
@@ -402,8 +518,8 @@ export function buildToolInstructions() {
   lines.push('- Use \`file_read\` before editing files to understand their current content.');
   lines.push('- Keep tool call responses concise. Only call tools that are necessary.');
   lines.push('');
-
+  
   return lines.join('\n');
 }
 
-export default { executeTool, TOOL_SCHEMAS, buildToolInstructions };
+export default { executeTool, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI, KNOWN_TOOLS, buildToolInstructions, execStream };

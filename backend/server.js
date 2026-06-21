@@ -1,6 +1,7 @@
 // ============================================================
 // Main Server — Express + WebSocket
 // Agent WebUI Backend
+// Features: Multi-provider support (QGenie, Local, OpenAI, Anthropic)
 // ============================================================
 
 import express from 'express';
@@ -16,7 +17,7 @@ import { LLMAdapter } from './llm-adapter.js';
 import { SkillLoader } from './skill-loader.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
-import { executeTool, buildToolInstructions } from './tool-executor.js';
+import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI } from './tool-executor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -24,7 +25,11 @@ const IDENTITY_DIR = path.join(ROOT_DIR, 'identity');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 
-// ── Config persistence ──────────────────────────────
+// ============================================================
+// Config persistence
+// Default: QGenie provider
+// ============================================================
+
 function loadConfig() {
   if (fs.existsSync(CONFIG_FILE)) {
     try {
@@ -32,11 +37,19 @@ function loadConfig() {
     } catch { /* ignore */ }
   }
   return {
-    provider: 'openrouter',
-    model: 'nvidia/nemotron-3-super-120b-a12b:free',
+    provider: 'qgenie', // Default changed from openrouter to qgenie
+    model: 'default',
     apiKey: '',
-    baseURL: 'https://openrouter.ai/api/v1',
+    baseURL: 'http://127.0.0.1:8910/v1', // Default to local GenieAPIService
     temperature: 0.7,
+    // Per-provider configs
+    providers: {
+      qgenie: { apiKey: '', baseURL: 'https://qgenie.example.com/v1', model: 'default' },
+      local: { apiKey: '', baseURL: 'http://127.0.0.1:8910/v1', model: 'default' },
+      openai: { apiKey: '', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' },
+      openrouter: { apiKey: '', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o' },
+      anthropic: { apiKey: '', baseURL: '', model: 'claude-opus-4-20250514' },
+    },
   };
 }
 
@@ -44,7 +57,10 @@ function saveConfig(cfg) {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
-// ── Status cache (for heartbeat) ──────────────────────
+// ============================================================
+// Status cache (for heartbeat)
+// ============================================================
+
 let statusCache = {
   backend: 'ok',
   backendVersion: '1.0.0',
@@ -53,17 +69,49 @@ let statusCache = {
   lastChecked: null,
 };
 
+/**
+ * Check model connection for multiple providers
+ */
 async function checkModelConnection(config) {
-  if (!config.apiKey) {
+  const { provider, apiKey, baseURL } = config;
+
+  // Local provider: check if GenieAPIService is running
+  if (provider === 'local') {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const resp = await fetch(`${baseURL || 'http://127.0.0.1:8910/v1'}/models`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (resp.ok) {
+        return { status: 'ok', message: 'Local LLM (GenieAPIService) reachable' };
+      }
+      return { status: 'error', message: `Local LLM returned ${resp.status}` };
+    } catch (err) {
+      return { status: 'error', message: `Local LLM unreachable: ${err.message}. Please start GenieAPIService on port 8910.` };
+    }
+  }
+
+  // QGenie: skip network check (intranet VPN environment)
+  if (provider === 'qgenie') {
+    if (!apiKey) {
+      return { status: 'error', message: 'No API key configured for QGenie' };
+    }
+    return { status: 'ok', message: 'QGenie ready (intranet, skip network check)' };
+  }
+
+  // Cloud providers: check API endpoint
+  if (!apiKey) {
     return { status: 'error', message: 'No API key configured' };
   }
-  const baseURL = config.baseURL || (config.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1');
-  const url = `${baseURL.replace(/\/+$/, '')}/models`;
+
+  const url = `${baseURL || 'https://api.openai.com/v1'}/models`;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     const resp = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${config.apiKey}` },
+      headers: { 'Authorization': `Bearer ${apiKey}` },
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -95,8 +143,10 @@ async function refreshStatus() {
   return statusCache;
 }
 
+// ============================================================
+// App init
+// ============================================================
 
-// ── App init ─────────────────────────────────────────
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -105,14 +155,20 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(ROOT_DIR, 'frontend', 'dist')));
 
-// ── Singletons ───────────────────────────────────────
+// ============================================================
+// Singletons
+// ============================================================
+
 const identity = new IdentityManager(IDENTITY_DIR);
 identity.load();
 
 const skillLoader = new SkillLoader(ROOT_DIR);
 skillLoader.load();
 
-// ── WebSocket sessions ─────────────────────────────────
+// ============================================================
+// WebSocket sessions
+// ============================================================
+
 const sessions = new Map(); // sessionId -> { ws, history, config }
 
 function broadcast(ws, data) {
@@ -121,32 +177,41 @@ function broadcast(ws, data) {
   }
 }
 
-// ── Build system prompt ──────────────────────────────
-function buildSystemPrompt() {
+/**
+ * Build system prompt (parameterized by provider)
+ * - Local provider: use XML format for skills
+ * - Cloud provider: use Markdown format
+ * - Native function calling: inject short prompt
+ */
+function buildSystemPrompt(provider = 'openai') {
   const parts = [];
 
   // Identity block (injected but output is filtered)
   const identBlock = identity.buildSystemBlock();
   if (identBlock) parts.push(identBlock);
 
-  // Skills
-  const skillsSnippet = skillLoader.toSystemPromptSnippet();
+  // Skills (format depends on provider)
+  const useXML = provider === 'local';
+  const skillsSnippet = skillLoader.toSystemPromptSnippet(useXML);
   if (skillsSnippet) parts.push(skillsSnippet);
 
-  // Base instructions + tool instructions
+  // Base instructions
+  const useNativeFunctionCalling = ['openai', 'openrouter', 'qgenie', 'local'].includes(provider);
   parts.push(`You are a powerful AI Agent.
 - When a user loads a skill by name, inject the skill's full content and follow its instructions.
 - Decompose complex tasks into parallel subtasks when beneficial.
 - Be direct, thorough, and resourceful.
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
-  // Append tool usage instructions
-  parts.push(buildToolInstructions());
+  // Append tool usage instructions (parameterized)
+  parts.push(buildToolInstructions(useNativeFunctionCalling));
 
   return parts.join('\n\n');
 }
 
-// ── REST API ─────────────────────────────────────────
+// ============================================================
+// REST API
+// ============================================================
 
 // Health check (lightweight, no external calls)
 app.get('/api/health', (req, res) => {
@@ -170,12 +235,21 @@ app.get('/api/status', async (req, res) => {
 // Get config (API keys masked)
 app.get('/api/config', (req, res) => {
   const cfg = loadConfig();
+  const providers = {};
+  for (const [name, pcfg] of Object.entries(cfg.providers || {})) {
+    providers[name] = {
+      ...pcfg,
+      apiKey: pcfg.apiKey ? '***' : '',
+      hasApiKey: Boolean(pcfg.apiKey),
+    };
+  }
   res.json({
     provider: cfg.provider,
     model: cfg.model,
     hasApiKey: Boolean(cfg.apiKey),
     baseURL: cfg.baseURL || '',
     temperature: cfg.temperature ?? 0.7,
+    providers,
   });
 });
 
@@ -183,6 +257,10 @@ app.get('/api/config', (req, res) => {
 app.post('/api/config', (req, res) => {
   const existing = loadConfig();
   const updated = { ...existing, ...req.body };
+  // Mask API key if '***'
+  if (req.body.apiKey === '***') {
+    updated.apiKey = existing.apiKey;
+  }
   saveConfig(updated);
   res.json({ success: true });
 });
@@ -198,6 +276,15 @@ app.get('/api/skills/:name', (req, res) => {
   const content = skillLoader.getContent(req.params.name);
   if (!content) return res.status(404).json({ error: 'Skill not found' });
   res.json({ name: req.params.name, content });
+});
+
+// Get skill icon
+app.get('/api/skills/:name/icon', (req, res) => {
+  const iconPath = skillLoader.getIconPath(req.params.name);
+  if (!iconPath || !fs.existsSync(iconPath)) {
+    return res.status(404).json({ error: 'Icon not found' });
+  }
+  res.sendFile(iconPath);
 });
 
 // Get common skill directories (for folder browser)
@@ -216,6 +303,16 @@ app.post('/api/skills/:name/enable', (req, res) => {
 app.post('/api/skills/:name/disable', (req, res) => {
   skillLoader.disable(req.params.name);
   res.json({ success: true, enabled: false });
+});
+
+// Update skill mode (off/cloud/local/both)
+app.post('/api/skills/:name/mode', (req, res) => {
+  const { mode } = req.body;
+  if (!['off', 'cloud', 'local', 'both'].includes(mode)) {
+    return res.status(400).json({ error: 'Invalid mode. Use: off, cloud, local, both' });
+  }
+  skillLoader.setMode(req.params.name, mode);
+  res.json({ success: true, mode });
 });
 
 // Scan directory for skills
@@ -267,7 +364,10 @@ app.post('/api/identity/soul', (req, res) => {
   res.json({ success: true });
 });
 
-// ── File browser API ─────────────────────────────────
+// ============================================================
+// File browser API
+// ============================================================
+
 // List directories at the given path
 app.get('/api/files/list', (req, res) => {
   try {
@@ -307,13 +407,10 @@ app.get('/api/files/list', (req, res) => {
   }
 });
 
-// Get common skill directories
-app.get('/api/skills/paths', (req, res) => {
-  const paths = skillLoader.getSearchPaths();
-  res.json({ paths });
-});
+// ============================================================
+// WebSocket handler
+// ============================================================
 
-// ── WebSocket handler ─────────────────────────────────
 wss.on('connection', (ws) => {
   const sessionId = uuidv4();
   sessions.set(sessionId, { ws, history: [], config: loadConfig() });
@@ -340,6 +437,12 @@ wss.on('connection', (ws) => {
     } else if (msg.type === 'clear_history') {
       session.history = [];
       broadcast(ws, { type: 'history_cleared' });
+    } else if (msg.type === 'restore_history') {
+      // Restore history from client
+      if (msg.history && Array.isArray(msg.history)) {
+        session.history = msg.history;
+        broadcast(ws, { type: 'history_restored', count: msg.history.length });
+      }
     } else if (msg.type === 'reload_skills') {
       skillLoader.load();
       broadcast(ws, { type: 'skills_reloaded', skills: skillLoader.getAll() });
@@ -347,6 +450,9 @@ wss.on('connection', (ws) => {
       // Set stop flag for this session
       session.stopRequested = true;
       broadcast(ws, { type: 'stopped', message: 'Task stopped by user' });
+    } else if (msg.type === 'exec_stream') {
+      // Real-time streaming execution
+      await handleExecStream(ws, session, msg);
     }
   });
 
@@ -355,7 +461,10 @@ wss.on('connection', (ws) => {
   });
 });
 
-// ── Direct tool/command execution (no LLM needed) ───────
+// ============================================================
+// Direct tool/command execution (no LLM needed)
+// ============================================================
+
 async function handleDirectExecution(ws, session, toolCall, rawInput) {
   const { history } = session;
 
@@ -383,7 +492,45 @@ async function handleDirectExecution(ws, session, toolCall, rawInput) {
   });
 }
 
-// ── Chat handler ──────────────────────────────────────
+// ============================================================
+// execStream — Real-time streaming execution
+// ============================================================
+
+async function handleExecStream(ws, session, msg) {
+  const { command, workdir } = msg;
+
+  broadcast(ws, { type: 'exec_start', command });
+
+  try {
+    const stream = execStream({ command, workdir });
+    
+    for await (const event of stream) {
+      if (event.type === 'stdout' || event.type === 'stderr') {
+        broadcast(ws, {
+          type: 'exec_output',
+          stream: event.type === 'stdout' ? 'stdout' : 'stderr',
+          data: event.data,
+        });
+      } else if (event.type === 'done') {
+        broadcast(ws, {
+          type: 'exec_done',
+          exitCode: event.exitCode,
+          success: event.success,
+        });
+      }
+    }
+  } catch (err) {
+    broadcast(ws, {
+      type: 'exec_error',
+      error: err.message,
+    });
+  }
+}
+
+// ============================================================
+// Chat handler
+// ============================================================
+
 async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
   const userMessage = msg.content;
@@ -412,9 +559,9 @@ async function handleChat(sessionId, session, msg) {
     return;
   }
 
-  // Check API key
+  // Check API key (skip for local provider)
   const cfg = { ...loadConfig(), ...config };
-  if (!cfg.apiKey) {
+  if (cfg.provider !== 'local' && !cfg.apiKey) {
     broadcast(ws, {
       type: 'error',
       message: 'No API key configured. Please set your API key in Settings.',
@@ -424,7 +571,7 @@ async function handleChat(sessionId, session, msg) {
 
   // Build LLM adapter
   const llmConfig = {
-    provider: cfg.provider || 'openai',
+    provider: cfg.provider || 'qgenie',
     apiKey: cfg.apiKey,
     model: cfg.model,
     baseURL: cfg.provider === 'openrouter'
@@ -436,7 +583,7 @@ async function handleChat(sessionId, session, msg) {
   // Add user message to history
   history.push({ role: 'user', content: userMessage });
 
-  const system = buildSystemPrompt();
+  const system = buildSystemPrompt(cfg.provider);
   const context = { system, history: history.slice(-10) };
 
   broadcast(ws, { type: 'thinking', message: 'Analyzing your request...' });
@@ -498,7 +645,10 @@ async function handleChat(sessionId, session, msg) {
   }
 }
 
-// ── SPA fallback ──────────────────────────────────────
+// ============================================================
+// SPA fallback
+// ============================================================
+
 app.get('*', (req, res) => {
   const indexPath = path.join(ROOT_DIR, 'frontend', 'dist', 'index.html');
   if (fs.existsSync(indexPath)) {
@@ -508,7 +658,10 @@ app.get('*', (req, res) => {
   }
 });
 
-// ── Start ─────────────────────────────────────────────
+// ============================================================
+// Start
+// ============================================================
+
 const PORT = process.env.PORT || 3737;
 server.listen(PORT, () => {
   console.log(`\n🚀 Agent WebUI Backend running at http://localhost:${PORT}`);

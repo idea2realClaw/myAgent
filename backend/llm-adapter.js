@@ -1,6 +1,7 @@
 // ============================================================
 // LLM Provider Adapter
-// Supports: OpenAI, Anthropic (Claude), OpenRouter
+// Supports: OpenAI, Anthropic (Claude), OpenRouter, QGenie, Local (GenieAPIService)
+// Features: Native function calling, structured stream events
 // ============================================================
 
 export class LLMAdapter {
@@ -8,11 +9,23 @@ export class LLMAdapter {
     this.config = config; // { provider, apiKey, model, baseURL? }
   }
 
+  /**
+   * Check if this adapter supports native function calling
+   */
+  supportsFunctionCalling() {
+    const { provider } = this.config;
+    return ['openai', 'openrouter', 'qgenie', 'local'].includes(provider);
+  }
+
   async chat(messages, options = {}) {
-    const { provider, apiKey, model, baseURL } = this.config;
+    const { provider } = this.config;
 
     if (provider === 'anthropic') {
       return this._anthropicChat(messages, options);
+    } else if (provider === 'qgenie') {
+      return this._qgenieChat(messages, options);
+    } else if (provider === 'local') {
+      return this._localChat(messages, options);
     } else {
       // OpenAI-compatible (openai + openrouter both use same API)
       return this._openaiChat(messages, options);
@@ -23,10 +36,16 @@ export class LLMAdapter {
     const { provider } = this.config;
     if (provider === 'anthropic') {
       yield* this._anthropicStream(messages, options);
+    } else if (provider === 'qgenie') {
+      yield* this._qgenieStream(messages, options);
+    } else if (provider === 'local') {
+      yield* this._localStream(messages, options);
     } else {
       yield* this._openaiStream(messages, options);
     }
   }
+
+  // ── OpenAI-compatible (openai, openrouter) ─────────
 
   async _openaiChat(messages, options) {
     const { OpenAI } = await import('openai');
@@ -41,12 +60,13 @@ export class LLMAdapter {
       messages,
       temperature: options.temperature ?? 0.7,
       max_tokens: options.maxTokens,
+      tools: options.tools || undefined,
       ...options.extra,
     });
     return response.choices[0].message.content;
   }
 
-  async *_openaiStream(messages, options) {
+  async *_openaiStream(messages, options = {}) {
     const { OpenAI } = await import('openai');
     const { apiKey, model, baseURL } = this.config;
 
@@ -54,19 +74,96 @@ export class LLMAdapter {
     if (baseURL) clientConfig.baseURL = baseURL;
 
     const client = new OpenAI(clientConfig);
-    const stream = await client.chat.completions.create({
+    
+    // Build request params
+    const params = {
       model: model || 'gpt-4o',
       messages,
       temperature: options.temperature ?? 0.7,
       stream: true,
       ...options.extra,
-    });
+    };
+    
+    // Add tools if provided (for native function calling)
+    if (options.tools && options.tools.length > 0) {
+      params.tools = options.tools;
+      params.tool_choice = 'auto';
+    }
+
+    const stream = await client.chat.completions.create(params);
+
+    let currentToolCall = null;
+    let toolCalls = [];
 
     for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content || '';
-      if (delta) yield delta;
+      const delta = chunk.choices[0]?.delta;
+      
+      if (!delta) continue;
+
+      // Handle text content
+      if (delta.content) {
+        yield {
+          type: 'text',
+          content: delta.content,
+        };
+      }
+
+      // Handle tool calls (native function calling)
+      if (delta.tool_calls && delta.tool_calls.length > 0) {
+        for (const tc of delta.tool_calls) {
+          if (!currentToolCall || tc.index !== currentToolCall.index) {
+            // New tool call
+            if (currentToolCall) {
+              toolCalls.push(currentToolCall);
+            }
+            currentToolCall = {
+              index: tc.index,
+              id: tc.id || `call_${Date.now()}_${tc.index}`,
+              type: 'function',
+              function: {
+                name: tc.function?.name || '',
+                arguments: tc.function?.arguments || '',
+              },
+            };
+          } else {
+            // Append to current tool call
+            if (tc.function?.arguments) {
+              currentToolCall.function.arguments += tc.function.arguments;
+            }
+          }
+        }
+      }
+    }
+
+    // Push last tool call
+    if (currentToolCall) {
+      toolCalls.push(currentToolCall);
+    }
+
+    // Yield tool calls as structured events
+    for (const tc of toolCalls) {
+      try {
+        const args = JSON.parse(tc.function.arguments || '{}');
+        yield {
+          type: 'tool_call',
+          id: tc.id,
+          name: tc.function.name,
+          arguments: args,
+        };
+      } catch {
+        // If can't parse arguments, yield raw
+        yield {
+          type: 'tool_call',
+          id: tc.id,
+          name: tc.function.name,
+          arguments: {},
+          raw: tc.function.arguments,
+        };
+      }
     }
   }
+
+  // ── Anthropic (Claude) ─────────────────────────────
 
   async _anthropicChat(messages, options) {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
@@ -103,8 +200,180 @@ export class LLMAdapter {
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        yield event.delta.text;
+        yield {
+          type: 'text',
+          content: event.delta.text,
+        };
       }
     }
+  }
+
+  // ── QGenie ────────────────────────────────────────
+
+  async _qgenieChat(messages, options) {
+    const { apiKey, model, baseURL } = this.config;
+    const url = `${baseURL || 'https://qgenie.example.com/v1'}/chat/completions`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey || 'dummy'}`,
+      },
+      body: JSON.stringify({
+        model: model || 'qgenie-default',
+        messages,
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens,
+        stream: false,
+      }),
+    });
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content || '';
+  }
+
+  async *_qgenieStream(messages, options = {}) {
+    const { apiKey, model, baseURL } = this.config;
+    const url = `${baseURL || 'https://qgenie.example.com/v1'}/chat/completions`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey || 'dummy'}`,
+      },
+      body: JSON.stringify({
+        model: model || 'qgenie-default',
+        messages,
+        temperature: options.temperature ?? 0.7,
+        stream: true,
+        ...(options.tools ? { tools: options.tools } : {}),
+      }),
+    });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n').filter(l => l.trim());
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') return;
+
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.content) {
+            yield { type: 'text', content: delta.content };
+          }
+          // Handle tool calls if present
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              yield {
+                type: 'tool_call',
+                name: tc.function?.name,
+                arguments: JSON.parse(tc.function?.arguments || '{}'),
+              };
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+  }
+
+  // ── Local (GenieAPIService) ──────────────────────
+
+  async _localChat(messages, options) {
+    const { model, baseURL } = this.config;
+    const url = `${baseURL || 'http://127.0.0.1:8910/v1'}/chat/completions`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model || 'local-default',
+        messages,
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens,
+        stream: false,
+      }),
+    });
+
+    const data = await response.json();
+    return data.choices[0]?.message?.content || '';
+  }
+
+  async *_localStream(messages, options = {}) {
+    const { model, baseURL } = this.config;
+    const url = `${baseURL || 'http://127.0.0.1:8910/v1'}/chat/completions`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model || 'local-default',
+        messages,
+        temperature: options.temperature ?? 0.7,
+        stream: true,
+      }),
+    });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n').filter(l => l.trim());
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') return;
+
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.content) {
+            yield { type: 'text', content: delta.content };
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+  }
+
+  /**
+   * Get available models for this provider
+   */
+  async listModels() {
+    const { provider, apiKey, baseURL } = this.config;
+    
+    try {
+      if (provider === 'local') {
+        const url = `${baseURL || 'http://127.0.0.1:8910/v1'}/models`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        return data.data || [];
+      } else if (provider === 'openai' || provider === 'openrouter' || provider === 'qgenie') {
+        const url = `${baseURL || 'https://api.openai.com/v1'}/models`;
+        const resp = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+        });
+        const data = await resp.json();
+        return data.data || [];
+      }
+    } catch (err) {
+      console.error('listModels error:', err.message);
+    }
+    return [];
   }
 }
