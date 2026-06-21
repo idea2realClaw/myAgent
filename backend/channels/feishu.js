@@ -10,7 +10,8 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
+const ROOT_DIR = path.join(__dirname, '..', '..');
+const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 
 // ============================================================
 // Configuration
