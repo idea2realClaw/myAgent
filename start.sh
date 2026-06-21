@@ -80,6 +80,11 @@ start_daemon() {
     return
   fi
 
+  # Create required directories
+  mkdir -p "$SCRIPT_DIR/identity"
+  mkdir -p "$SCRIPT_DIR/logs"
+  mkdir -p "$SCRIPT_DIR/backend/logs"
+
   echo "🚀 Starting Agent WebUI Daemon..."
   echo "   Identity files: $SCRIPT_DIR/identity/"
   echo "   Skills: Add to .claude/skills/ or ~/.claude/skills/"

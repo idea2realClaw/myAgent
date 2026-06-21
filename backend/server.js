@@ -25,6 +25,15 @@ const ROOT_DIR = path.join(__dirname, '..');
 const IDENTITY_DIR = path.join(ROOT_DIR, 'identity');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
+const LOGS_DIR = path.join(ROOT_DIR, 'logs');
+
+// Create required directories on startup
+[IDENTITY_DIR, LOGS_DIR, path.join(ROOT_DIR, 'backend', 'logs')].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`[Startup] Created directory: ${dir}`);
+  }
+});
 
 // ============================================================
 // Config persistence
