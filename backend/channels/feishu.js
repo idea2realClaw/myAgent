@@ -366,6 +366,9 @@ function getStatus() {
 // Export
 // ============================================================
 
+// Auto-load config when module is imported
+loadConfig();
+
 export {
   loadConfig,
   saveConfig,
