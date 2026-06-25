@@ -2,6 +2,11 @@
 // ============================================================
 // Agent WebUI — Daemon Process
 // Manages the main server process with graceful restart
+// Features:
+//   - Zero-downtime restart (start new before stop old)
+//   - Health check before switching
+//   - Rate-limited restart
+//   - Frontend notification via control API
 // ============================================================
 
 import { spawn } from 'child_process';
@@ -22,11 +27,14 @@ const LOG_DIR = path.join(ROOT_DIR, 'logs');
 const CONFIG = {
   serverJs: SERVER_JS,
   port: process.env.PORT || 3737,
+  controlPort: process.env.CONTROL_PORT || 13737,
   maxRestarts: 10,          // Maximum restarts in 10 minutes
   restartWindow: 10 * 60 * 1000, // 10 minutes
   restartDelay: 3000,       // Delay between restarts (3s)
   gracefulTimeout: 30000,   // Wait 30s for graceful shutdown
-  healthCheckUrl: `http://localhost:${process.env.PORT || 3737}/api/health`,
+  healthCheckUrl: `http://127.0.0.1:${process.env.PORT || 3737}/api/health`,
+  healthCheckTimeout: 5000,  // 5s timeout for health check
+  startupTimeout: 15000,     // 15s for server to start
   logFile: path.join(LOG_DIR, 'agent-webui-daemon.log'),
   serverLogFile: path.join(LOG_DIR, 'agent-webui-server.log'),
 };
@@ -43,7 +51,11 @@ function log(message, level = 'info') {
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`;
   fs.appendFileSync(CONFIG.logFile, line);
-  console.log(line.trim());
+  if (level === 'error' || level === 'warn') {
+    console[level === 'error' ? 'error' : 'warn'](line.trim());
+  } else {
+    console.log(line.trim());
+  }
 }
 
 // ============================================================
@@ -76,27 +88,157 @@ function isRunning(pid) {
 // ============================================================
 
 let serverProcess = null;
+let serverPort = CONFIG.port;
 let restartCount = 0;
 let restartTimes = [];
 let isShuttingDown = false;
 let isRestarting = false;
+let restartResolve = null;
 
-function startServer() {
-  log(`Starting server: ${CONFIG.serverJs}`);
+// Zero-downtime restart: start new server, wait for health, then stop old
+async function zeroDowntimeRestart() {
+  if (isRestarting) {
+    log('Zero-downtime restart already in progress');
+    return false;
+  }
 
-  const logStream = fs.openSync(CONFIG.serverLogFile, 'a');
+  log('Initiating zero-downtime restart...');
+  isRestarting = true;
 
-  serverProcess = spawn('node', [CONFIG.serverJs], {
-    cwd: __dirname,
-    stdio: ['ignore', logStream, logStream],
-    detached: false,
-    env: { ...process.env },
+  const oldProcess = serverProcess;
+  let newProcess = null;
+
+  try {
+    // 1. Start new server process
+    log('Starting new server process...');
+    newProcess = spawn('node', [CONFIG.serverJs], {
+      cwd: __dirname,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+      env: { ...process.env },
+    });
+
+    // Pipe output to log file
+    const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });
+    newProcess.stdout.pipe(logStream, { end: false });
+    newProcess.stderr.pipe(logStream, { end: false });
+
+    log(`New server process started (PID: ${newProcess.pid})`);
+
+    // 2. Wait for new server to be healthy
+    log('Waiting for new server to become healthy...');
+    const healthy = await waitForHealth(newProcess, CONFIG.startupTimeout);
+
+    if (!healthy) {
+      log('New server failed to become healthy, aborting restart', 'error');
+      newProcess.kill('SIGTERM');
+      isRestarting = false;
+      return false;
+    }
+
+    log('New server is healthy, stopping old server...');
+
+    // 3. Stop old server gracefully
+    if (oldProcess && !isShuttingDown) {
+      await stopServerGraceful(oldProcess);
+    }
+
+    // 4. Update serverProcess reference
+    serverProcess = newProcess;
+    isRestarting = false;
+
+    // 5. Set up exit handler for new process
+    setupExitHandler(newProcess);
+
+    log('Zero-downtime restart completed successfully');
+    return true;
+
+  } catch (err) {
+    log(`Zero-downtime restart failed: ${err.message}`, 'error');
+    if (newProcess && !newProcess.killed) {
+      newProcess.kill('SIGKILL');
+    }
+    isRestarting = false;
+    return false;
+  }
+}
+
+// Wait for server to become healthy
+async function waitForHealth(process, timeoutMs) {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < timeoutMs) {
+    // Check if process is still running
+    if (process.exitCode !== null || process.signalCode !== null) {
+      log('Server process exited before becoming healthy', 'warn');
+      return false;
+    }
+
+    // Try health check
+    const healthy = await checkHealth();
+    if (healthy) {
+      log(`Server became healthy after ${Date.now() - startTime}ms`);
+      return true;
+    }
+
+    // Wait 500ms before next check
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  log(`Server failed to become healthy within ${timeoutMs}ms`, 'warn');
+  return false;
+}
+
+// Check server health
+async function checkHealth() {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CONFIG.healthCheckTimeout);
+
+    const response = await fetch(CONFIG.healthCheckUrl, {
+      signal: controller.signal,
+    }).catch(() => null);
+
+    clearTimeout(timeout);
+    return response && response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Stop server gracefully
+async function stopServerGraceful(process) {
+  return new Promise((resolve) => {
+    if (!process || process.killed) {
+      resolve();
+      return;
+    }
+
+    log(`Stopping server gracefully (PID: ${process.pid})...`);
+
+    // Set timeout for force kill
+    const forceKillTimeout = setTimeout(() => {
+      if (process && !process.killed) {
+        log(`Server did not exit in time, force killing (PID: ${process.pid})`, 'warn');
+        process.kill('SIGKILL');
+      }
+    }, CONFIG.gracefulTimeout);
+
+    process.once('exit', () => {
+      clearTimeout(forceKillTimeout);
+      log(`Server stopped (PID: ${process.pid})`);
+      resolve();
+    });
+
+    // Send SIGTERM for graceful shutdown
+    process.kill('SIGTERM');
   });
+}
 
-  log(`Server process started (PID: ${serverProcess.pid})`);
-
-  serverProcess.on('exit', (code, signal) => {
-    log(`Server process exited (PID: ${serverProcess.pid}, code: ${code}, signal: ${signal})`);
+// Set up exit handler for server process
+function setupExitHandler(process) {
+  process.on('exit', (code, signal) => {
+    log(`Server process exited (PID: ${process.pid}, code: ${code}, signal: ${signal})`);
     serverProcess = null;
 
     if (isShuttingDown) {
@@ -105,9 +247,9 @@ function startServer() {
     }
 
     if (isRestarting) {
-      log('Graceful restart in progress, starting new server...');
+      // This shouldn't happen with zero-downtime restart
+      log('Server exited during restart, this shouldn\'t happen', 'warn');
       isRestarting = false;
-      setTimeout(() => startServer(), 1000);
       return;
     }
 
@@ -126,108 +268,76 @@ function startServer() {
     setTimeout(() => startServer(), CONFIG.restartDelay);
   });
 
-  serverProcess.on('error', (err) => {
+  process.on('error', (err) => {
     log(`Server process error: ${err.message}`, 'error');
   });
 }
 
-function stopServer() {
-  return new Promise((resolve) => {
-    if (!serverProcess) {
-      log('No server process to stop');
-      resolve();
-      return;
-    }
+function startServer() {
+  log(`Starting server: ${CONFIG.serverJs}`);
 
-    log(`Stopping server (PID: ${serverProcess.pid})...`);
-
-    // Set timeout for force kill
-    const forceKillTimeout = setTimeout(() => {
-      if (serverProcess) {
-        log(`Server did not exit in time, force killing (PID: ${serverProcess.pid})`, 'warn');
-        serverProcess.kill('SIGKILL');
-      }
-    }, CONFIG.gracefulTimeout);
-
-    serverProcess.once('exit', () => {
-      clearTimeout(forceKillTimeout);
-      log('Server stopped');
-      serverProcess = null;
-      resolve();
-    });
-
-    // Send SIGTERM for graceful shutdown
-    serverProcess.kill('SIGTERM');
+  serverProcess = spawn('node', [CONFIG.serverJs], {
+    cwd: __dirname,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+    env: { ...process.env },
   });
+
+  // Pipe output to log file
+  const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });
+  serverProcess.stdout.pipe(logStream, { end: false });
+  serverProcess.stderr.pipe(logStream, { end: false });
+
+  log(`Server process started (PID: ${serverProcess.pid})`);
+
+  setupExitHandler(serverProcess);
 }
 
 async function gracefulRestart() {
-  if (isRestarting) {
-    log('Graceful restart already in progress');
-    return false;
-  }
-
-  log('Initiating graceful restart...');
-  isRestarting = true;
-
-  await stopServer();
-
-  // startServer() will be called by the exit handler
-  return true;
+  return await zeroDowntimeRestart();
 }
 
 // ============================================================
-// Health Check
+// Control Server
 // ============================================================
 
-async function checkHealth() {
-  if (!serverProcess) return false;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(CONFIG.healthCheckUrl, {
-      signal: controller.signal,
-    }).catch(() => null);
-
-    clearTimeout(timeout);
-    return response && response.ok;
-  } catch {
-    return false;
-  }
-}
-
-// ============================================================
-// Control Socket (Unix Domain Socket for local control)
-// ============================================================
-
-import { createServer as createTCPServer } from 'net';
 import http from 'http';
 
-const CONTROL_PORT = 13737; // Control port for daemon commands
-
 function startControlServer() {
-  const controlServer = http.createServer((req, res) => {
+  const controlServer = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (req.url === '/status') {
-      res.writeHead(200);
-      res.end(JSON.stringify({
+      const status = {
         daemon: { pid: process.pid, uptime: process.uptime() },
         server: serverProcess ? { pid: serverProcess.pid, running: true } : { running: false },
-      }));
+        restarting: isRestarting,
+      };
+      res.writeHead(200);
+      res.end(JSON.stringify(status));
     } else if (req.url === '/restart' && req.method === 'POST') {
+      if (isRestarting) {
+        res.writeHead(409);
+        res.end(JSON.stringify({ success: false, error: 'Restart already in progress' }));
+        return;
+      }
       gracefulRestart().then((success) => {
-        res.writeHead(success ? 200 : 409);
+        res.writeHead(success ? 200 : 500);
         res.end(JSON.stringify({ success }));
       });
     } else if (req.url === '/stop' && req.method === 'POST') {
       isShuttingDown = true;
-      stopServer().then(() => {
+      stopServerGraceful(serverProcess).then(() => {
         res.writeHead(200);
         res.end(JSON.stringify({ success: true }));
+        removePid();
         process.exit(0);
+      });
+    } else if (req.url === '/health') {
+      checkHealth().then((healthy) => {
+        res.writeHead(healthy ? 200 : 503);
+        res.end(JSON.stringify({ healthy }));
       });
     } else {
       res.writeHead(404);
@@ -235,8 +345,8 @@ function startControlServer() {
     }
   });
 
-  controlServer.listen(CONTROL_PORT, '127.0.0.1', () => {
-    log(`Control server listening on 127.0.0.1:${CONTROL_PORT}`);
+  controlServer.listen(CONFIG.controlPort, '127.0.0.1', () => {
+    log(`Control server listening on 127.0.0.1:${CONFIG.controlPort}`);
   });
 
   return controlServer;
@@ -249,7 +359,7 @@ function startControlServer() {
 process.on('SIGTERM', async () => {
   log('Received SIGTERM, shutting down gracefully...');
   isShuttingDown = true;
-  await stopServer();
+  await stopServerGraceful(serverProcess);
   removePid();
   process.exit(0);
 });
@@ -257,7 +367,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   log('Received SIGINT, shutting down...');
   isShuttingDown = true;
-  await stopServer();
+  await stopServerGraceful(serverProcess);
   removePid();
   process.exit(0);
 });

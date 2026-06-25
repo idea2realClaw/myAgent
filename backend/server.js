@@ -747,11 +747,14 @@ async function gracefulShutdown(signal) {
   });
 
   // Close all WebSocket connections
+  let closedCount = 0;
   for (const [sessionId, session] of sessions) {
     try {
       session.ws.close(1001, 'Server restarting');
+      closedCount++;
     } catch { /* ignore */ }
   }
+  console.log(`[Shutdown] Closed ${closedCount} WebSocket connections`);
   sessions.clear();
 
   // Close HTTP server
@@ -771,12 +774,11 @@ async function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Handle restart request from daemon
+// Handle restart request from daemon (zero-downtime restart)
+// Daemon will start new process before stopping this one
 process.on('SIGUSR1', () => {
   console.log('\n[Restart] Received SIGUSR1, initiating graceful restart...');
-  gracefulShutdown('SIGUSR1').then(() => {
-    // Daemon will restart us
-  });
+  gracefulShutdown('SIGUSR1');
 });
 
 // ============================================================

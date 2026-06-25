@@ -1567,13 +1567,48 @@ function clearHistory() {
 }
 
 function restartServer() {
-  if (!wsReady) {
-    showToast('Not connected to server', 'error');
+  if (!confirm('重启服务器？这将断开所有客户端连接，但会零停机时间重启。')) return;
+  showToast('正在重启服务器（零停机时间）...', 'info');
+  
+  // Call daemon REST API
+  fetch('http://127.0.0.1:13737/restart', { method: 'POST' })
+    .then(r => r.json())
+    .then(result => {
+      if (result.success) {
+        showToast('服务器重启中...', 'info');
+        // Wait for server to come back
+        setTimeout(checkServerReady, 5000);
+      } else {
+        showToast('重启失败: ' + (result.error || '未知错误'), 'error');
+      }
+    })
+    .catch(err => {
+      showToast('重启失败: ' + err.message, 'error');
+    });
+}
+
+// Check if server is ready after restart
+function checkServerReady(retries = 0) {
+  if (retries > 10) {
+    showToast('服务器重启超时，请刷新页面', 'error');
     return;
   }
-  if (!confirm('Restart server? This will disconnect all clients.')) return;
-  showToast('Restarting server...', 'info');
-  ws.send(JSON.stringify({ type: 'restart' }));
+  
+  fetch('/api/health')
+    .then(r => {
+      if (r.ok) {
+        showToast('服务器重启成功！', 'success');
+        // Reconnect WebSocket
+        if (ws && ws.readyState !== WebSocket.OPEN) {
+          connectWebSocket();
+        }
+      } else {
+        setTimeout(() => checkServerReady(retries + 1), 2000);
+      }
+    })
+    .catch(() => {
+      setTimeout(() => checkServerReady(retries + 1), 2000);
+    });
 }
 
 // ── Skills ──────────────────────────────────────────────────
