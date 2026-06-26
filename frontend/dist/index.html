@@ -1461,9 +1461,13 @@ function createAssistantBubble() {
   const container = document.getElementById('messages');
   const el = document.createElement('div');
   el.className = 'message assistant';
+  const badgeHtml = _currentModelAlias ? `<div class="model-badge">${_currentModelAlias}</div>` : '';
   el.innerHTML = `
     <div class="avatar">AI</div>
-    <div class="bubble"><div class="md-content" id="streaming-content"></div></div>
+    <div class="bubble">
+      ${badgeHtml}
+      <div class="md-content" id="streaming-content"></div>
+    </div>
   `;
   container.appendChild(el);
   scrollToBottom();
