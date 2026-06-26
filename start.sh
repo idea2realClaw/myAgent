@@ -2,7 +2,27 @@
 # ============================================================
 # Agent WebUI — Start Script (uses daemon for graceful restart)
 # ============================================================
+
+# Ensure Node.js is findable on Windows/Git Bash
+# This runs BEFORE set -e so missing node doesn't kill the script
+for __node_dir in \
+  "$HOME/.workbuddy/binaries/node/versions/22.22.2" \
+  "$HOME/.workbuddy/binaries/node/versions/24.14.0" \
+  "/c/Program Files/nodejs" \
+  "$HOME/AppData/Local/Programs/nodejs"; do
+  if [ -f "$__node_dir/node" ] || [ -f "$__node_dir/node.exe" ]; then
+    export PATH="$__node_dir:$PATH"
+    break
+  fi
+done
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "❌ Node.js is required. Install from https://nodejs.org"
+  exit 1
+fi
+
 set -e
+echo "✅ Node.js found: $(command -v node)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
@@ -15,11 +35,6 @@ echo "║          Agent WebUI Launcher             ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# Check node
-if ! command -v node &> /dev/null; then
-  echo "❌ Node.js is required. Install from https://nodejs.org"
-  exit 1
-fi
 
 # Install deps if needed
 if [ ! -d "$BACKEND_DIR/node_modules" ]; then

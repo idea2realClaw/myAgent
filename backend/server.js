@@ -25,6 +25,7 @@ const ROOT_DIR = path.join(__dirname, '..');
 const IDENTITY_DIR = path.join(ROOT_DIR, 'identity');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
+const MODELS_FILE = path.join(ROOT_DIR, 'backend', 'models.json');
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');
 
 // Create required directories on startup
@@ -271,6 +272,10 @@ app.post('/api/config', (req, res) => {
   if (req.body.apiKey === '***') {
     updated.apiKey = existing.apiKey;
   }
+  // Prevent empty apiKey from overwriting existing key
+  if (!req.body.apiKey && existing.apiKey) {
+    updated.apiKey = existing.apiKey;
+  }
   saveConfig(updated);
   res.json({ success: true });
 });
@@ -461,12 +466,58 @@ app.post('/api/channels/feishu/config', async (req, res) => {
 });
 
 // ============================================================
+// Log helper — sends log events to WebSocket client
+// ============================================================
+function sendLog(ws, level, message, data) {
+  const log = {
+    type: 'log',
+    level,
+    message,
+    timestamp: new Date().toISOString(),
+    data: data || null,
+  };
+  try { ws.send(JSON.stringify(log)); } catch { /* ignore */ }
+}
+
+// ============================================================
 // WebSocket handler
 // ============================================================
 
 wss.on('connection', (ws) => {
   const sessionId = uuidv4();
   sessions.set(sessionId, { ws, history: [], config: loadConfig() });
+
+  // ── 发送启动日志 ──────────────────────────────────────
+  const cfg = loadConfig();
+  sendLog(ws, 'info', '🟢 WebUI 已连接', { session: sessionId.slice(0, 8) });
+  sendLog(ws, 'info', '⚙️ 配置加载完成', { provider: cfg.provider, model: cfg.model });
+  sendLog(ws, 'info', `📦 技能已加载: ${skillLoader.getAll().length} 个`);
+
+  // 异步检查 LLM 连接
+  (async () => {
+    sendLog(ws, 'info', '🔌 开始测试 LLM 连接...', { provider: cfg.provider, url: cfg.baseURL || '默认' });
+    const status = await refreshStatus();
+    if (status.model === 'ok') {
+      sendLog(ws, 'info', `✅ LLM 连接测试通过`, { message: status.modelMessage });
+    } else {
+      sendLog(ws, 'error', `❌ LLM 连接测试失败`, { message: status.modelMessage });
+    }
+  })();
+
+  // 异步检查飞书连接
+  (async () => {
+    const fStatus = getFeishuStatus();
+    if (fStatus?.enabled) {
+      sendLog(ws, 'info', `🔌 飞书通道已启用`);
+      if (fStatus.hasCredentials) {
+        sendLog(ws, 'info', `✅ 飞书凭据已配置${fStatus.hasToken ? '，连接正常' : '，等待获取 Token'}`);
+      } else {
+        sendLog(ws, 'warn', `⚠️ 飞书已启用但凭据未完全配置`);
+      }
+    } else {
+      sendLog(ws, 'info', `⏸️ 飞书通道未启用（可在 Settings 中配置）`);
+    }
+  })();
 
   broadcast(ws, { type: 'session_init', sessionId });
 
@@ -484,8 +535,36 @@ wss.on('connection', (ws) => {
     if (msg.type === 'chat') {
       await handleChat(sessionId, session, msg);
     } else if (msg.type === 'config_update') {
-      session.config = { ...session.config, ...msg.config };
-      saveConfig(session.config);
+      const existing = loadConfig();
+      const merged = { ...existing, ...msg.config };
+      // Mask API key if '***' (same protection as HTTP POST)
+      if (msg.config && msg.config.apiKey === '***') {
+        merged.apiKey = existing.apiKey;
+      }
+      // Prevent empty apiKey from overwriting existing key
+      if (msg.config && !msg.config.apiKey && existing.apiKey) {
+        merged.apiKey = existing.apiKey;
+      }
+      session.config = merged;
+      saveConfig(merged);
+
+      // Auto-add model to models.json if not already present
+      try {
+        const model = merged.model;
+        const provider = merged.provider;
+        if (model && provider) {
+          const data = loadModels();
+          if (!data[provider]) data[provider] = [];
+          if (!data[provider].includes(model)) {
+            data[provider].push(model);
+            saveModels(data);
+            console.log(`[Models] Auto-added ${model} to ${provider} list`);
+          }
+        }
+      } catch (e) {
+        console.error('[Models] Failed to auto-add model:', e.message);
+      }
+
       broadcast(ws, { type: 'config_saved' });
     } else if (msg.type === 'clear_history') {
       session.history = [];
@@ -586,6 +665,41 @@ async function handleExecStream(ws, session, msg) {
 }
 
 // ============================================================
+// Simple command detection
+// ============================================================
+
+function isSimpleCommand(input) {
+  const trimmed = input.trim();
+
+  // Common Chinese/English greetings and short phrases
+  const greetings = [
+    '你好', '您好', '早上好', '上午好', '下午好', '晚上好',
+    '好吗', '好不好', '怎么样', '如何',
+    '谢谢', '感谢', '多谢',
+    '再见', '拜拜', '拜拜了',
+    '是的', '对的', '没错', 'ok', 'OK', 'Ok',
+    '好的', '好', '行', '可以', '没问题',
+    'hi', 'Hi', 'hello', 'Hello', 'hey', 'Hey',
+    'thanks', 'Thank you', 'Bye', 'Goodbye',
+  ];
+
+  // Check if input is a greeting (exact match or starts with greeting)
+  for (const g of greetings) {
+    if (trimmed === g || (trimmed.startsWith(g) && trimmed.length <= g.length + 5)) {
+      return true;
+    }
+  }
+
+  // Check length (<10 Chinese characters)
+  const charCount = Array.from(trimmed).length;
+  if (charCount < 10) {
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================
 // Chat handler
 // ============================================================
 
@@ -641,10 +755,89 @@ async function handleChat(sessionId, session, msg) {
   // Add user message to history
   history.push({ role: 'user', content: userMessage });
 
+  sendLog(ws, 'info', `收到用户消息`, { content: userMessage.slice(0, 100) });
+
   const system = buildSystemPrompt(cfg.provider);
   const context = { system, history: history.slice(-10) };
 
-  broadcast(ws, { type: 'thinking', message: 'Analyzing your request...' });
+  const isSimple = isSimpleCommand(userMessage);
+
+  if (isSimple) {
+    sendLog(ws, 'info', `简单指令，跳过任务分解`, { charCount: userMessage.trim().length });
+
+    // 直接调用 LLM，不用子任务 Panel
+    broadcast(ws, { type: 'thinking', message: '思考中...' });
+
+    try {
+      // 构造 API 请求信息并打印日志
+      const apiUrl = llmConfig.baseURL || (llmConfig.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1');
+      const apiModel = llmConfig.model || 'gpt-4o';
+      
+      // 构造完整的请求 messages
+      const requestMessages = [
+        { role: 'system', content: system },
+        ...history.slice(-10),
+      ];
+      
+      // 打印请求体（双向日志 - 请求）
+      sendLog(ws, 'info', `🤖 发送 LLM 请求`, {
+        provider: llmConfig.provider,
+        model: apiModel,
+        url: `${apiUrl}/chat/completions`,
+        messageCount: requestMessages.length,
+      });
+      
+      // 打印每条 message 的摘要（避免日志过长）
+      requestMessages.forEach((msg, idx) => {
+        const contentPreview = (msg.content || '').slice(0, 200).replace(/\n/g, ' ');
+        sendLog(ws, 'info', `  [请求] Message ${idx + 1}`, {
+          role: msg.role,
+          contentPreview: contentPreview + (msg.content && msg.content.length > 200 ? '...' : ''),
+        });
+      });
+      
+      // 直接创建 Assistant 气泡，流式输出
+      const currentBubble = true;
+      let fullResponse = '';
+
+      for await (const chunk of llm.stream(requestMessages)) {
+        if (chunk.type === 'text') {
+          fullResponse += chunk.content;
+          broadcast(ws, { type: 'synthesis_chunk', chunk: chunk.content });
+        } else if (chunk.type === 'tool_call') {
+          sendLog(ws, 'warn', `🔧 简单问题触发工具调用`, { tool: chunk.name, args: JSON.stringify(chunk.args).slice(0, 100) });
+        }
+      }
+
+      sendLog(ws, 'info', `✅ LLM 返回成功`, { contentLength: fullResponse.length });
+
+      // 打印响应体（双向日志 - 响应）
+      const responsePreview = fullResponse.slice(0, 500).replace(/\n/g, ' ');
+      sendLog(ws, 'info', `  [响应] LLM 返回内容`, {
+        preview: responsePreview + (fullResponse.length > 500 ? '...' : ''),
+        fullLength: fullResponse.length,
+      });
+
+      // 过滤身份泄露
+      const filteredAnswer = identity.filterOutput(fullResponse);
+
+      // 添加到历史
+      history.push({ role: 'assistant', content: filteredAnswer });
+
+      broadcast(ws, { type: 'synthesis_done' });
+      broadcast(ws, { type: 'done', content: filteredAnswer, subtasks: [] });
+
+    } catch (err) {
+      sendLog(ws, 'error', `❌ LLM API 请求失败`, { error: err.message });
+      broadcast(ws, { type: 'error', message: `LLM 请求失败: ${err.message}` });
+    }
+
+    return;
+  }
+
+  // 复杂指令：执行任务分解
+  sendLog(ws, 'info', `复杂指令，开始任务分解`, { contentLength: userMessage.length });
+  broadcast(ws, { type: 'thinking', message: '分析中...' });
 
   const orchestrator = new TaskOrchestrator(llm, (event) => {
     broadcast(ws, event);
@@ -652,8 +845,53 @@ async function handleChat(sessionId, session, msg) {
 
   try {
     // Step 1: Decompose task
+    sendLog(ws, 'info', `开始任务分解`);
+    
+    // 计算 API URL
+    const decompApiUrl = llmConfig.baseURL || (llmConfig.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : llmConfig.provider === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1');
+    const decompApiModel = llmConfig.model || 'default';
+    
+    // 打印分解请求（双向日志 - 请求）
+    const decompMessages = [
+      { role: 'system', content: system },
+      { role: 'user', content: `请分解任务：${userMessage}` },
+    ];
+    sendLog(ws, 'info', `🤖 发送 LLM 分解请求`, {
+      provider: llmConfig.provider,
+      model: decompApiModel,
+      url: `${decompApiUrl}/chat/completions`,
+      task: userMessage.slice(0, 60),
+      messageCount: decompMessages.length,
+    });
+    
+    decompMessages.forEach((msg, idx) => {
+      const contentPreview = (msg.content || '').slice(0, 200).replace(/\n/g, ' ');
+      sendLog(ws, 'info', `  [分解请求] Message ${idx + 1}`, {
+        role: msg.role,
+        contentPreview: contentPreview + (msg.content && msg.content.length > 200 ? '...' : ''),
+      });
+    });
+    
     broadcast(ws, { type: 'decomposing' });
     const plan = await orchestrator.decompose(userMessage, system);
+    
+    // 打印分解响应（双向日志 - 响应）
+    sendLog(ws, 'info', `✅ 任务分解完成`, { title: plan.title, subtaskCount: plan.subtasks.length });
+    const planPreview = JSON.stringify(plan).slice(0, 500);
+    sendLog(ws, 'info', `  [分解响应] 分解计划`, {
+      planPreview: planPreview + (JSON.stringify(plan).length > 500 ? '...' : ''),
+    });
+
+    // 打印每个子任务的工具调用指令
+    sendLog(ws, 'info', `📋 分解计划:`);
+    plan.subtasks.forEach((t, i) => {
+      sendLog(ws, 'info', `  ${i + 1}. [${t.id}] ${t.title}`, {
+        tool: t.tool,
+        args: JSON.stringify(t.args).slice(0, 100),
+        depends_on: (t.depends_on || []).join(',') || '-',
+      });
+    });
+
     broadcast(ws, {
       type: 'plan',
       plan: {
@@ -662,28 +900,41 @@ async function handleChat(sessionId, session, msg) {
         subtasks: plan.subtasks.map(t => ({
           id: t.id,
           title: t.title,
-          type: t.type,
+          tool: t.tool,
+          args: t.args,
+          depends_on: t.depends_on || [],
           status: 'pending',
         })),
       },
     });
 
     // Step 2: Execute subtasks (parallel where possible)
+    sendLog(ws, 'info', `🚀 开始执行子任务`);
     const results = await orchestrator.executeAll(plan, context, (taskId, chunk) => {
       // chunk events already sent via onProgress
     });
+
+    // 打印每个子任务的执行结果摘要
+    results.forEach(r => {
+      const preview = (r.result || '').slice(0, 80).replace(/\n/g, ' ');
+      sendLog(ws, r.status === 'done' ? 'info' : 'warn', `  ${r.id} ${r.title} → ${r.status}`, { preview: preview + '...' });
+    });
+    sendLog(ws, 'info', `✅ 所有子任务执行完成`, { count: results.length });
 
     // Step 3: Synthesize if multiple subtasks
     let finalAnswer;
     if (results.length === 1) {
       finalAnswer = results[0].result;
     } else {
+      sendLog(ws, 'info', `开始综合多个子任务结果`, { count: results.length });
       broadcast(ws, { type: 'synthesizing' });
       finalAnswer = await orchestrator.synthesize(userMessage, results, context);
     }
 
     // Filter identity leakage
     finalAnswer = identity.filterOutput(finalAnswer);
+
+    sendLog(ws, 'info', `任务完成，返回给用户`, { contentLength: finalAnswer.length });
 
     // Add to history
     history.push({ role: 'assistant', content: finalAnswer });
@@ -699,9 +950,63 @@ async function handleChat(sessionId, session, msg) {
     });
 
   } catch (err) {
+    sendLog(ws, 'error', `聊天处理异常`, { error: err.message });
     broadcast(ws, { type: 'error', message: err.message });
   }
 }
+
+// ============================================================
+// Model List Management (models.json)
+// ============================================================
+
+function loadModels() {
+  if (fs.existsSync(MODELS_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(MODELS_FILE, 'utf8'));
+    } catch { /* ignore */ }
+  }
+  // Default structure
+  return {
+    qgenie: ['default'],
+    local: ['default'],
+    openai: ['gpt-4o', 'gpt-4o-mini'],
+    anthropic: ['claude-opus-4-20250514', 'claude-sonnet-4-20250514'],
+    openrouter: ['nvidia/nemotron-3-super-120b-a12b:free'],
+  };
+}
+
+function saveModels(data) {
+  try {
+    fs.writeFileSync(MODELS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[Models] Failed to save models.json:', e.message);
+  }
+}
+
+// Get models for a provider
+app.get('/api/models/:provider', (req, res) => {
+  const { provider } = req.params;
+  const data = loadModels();
+  const models = data[provider] || [];
+  res.json({ provider, models });
+});
+
+// Add a model to a provider's list
+app.post('/api/models/:provider', express.json(), (req, res) => {
+  const { provider } = req.params;
+  const { model } = req.body;
+  if (!model || !provider) {
+    return res.status(400).json({ error: 'Missing provider or model' });
+  }
+  const data = loadModels();
+  if (!data[provider]) data[provider] = [];
+  if (!data[provider].includes(model)) {
+    data[provider].push(model);
+    saveModels(data);
+    console.log(`[Models] Added ${model} to ${provider} list`);
+  }
+  res.json({ provider, models: data[provider] });
+});
 
 // ============================================================
 // SPA fallback

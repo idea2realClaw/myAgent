@@ -1,11 +1,14 @@
 // ============================================================
 // Task Decomposer & Parallel Executor
-// Breaks a complex task into subtasks, runs them concurrently
-// Now supports Native Function Calling (OpenAI tool_calls)
-// Features: Loop Guard, structured stream events
+// 结构化任务分解：每个子任务必须是一个可执行的工具调用
+// 确保每一步都有结果
 // ============================================================
 
 import { executeTool, buildToolInstructions, TOOL_SCHEMAS_OPENAI, KNOWN_TOOLS } from './tool-executor.js';
+
+// 可在分解计划中使用的"工具"白名单
+// 包含真实工具 + 一个特殊的 llm_reason（用于需要 LLM 推理/综合的步骤）
+const PLANNABLE_TOOLS = new Set([...KNOWN_TOOLS, 'llm_reason']);
 
 export class TaskOrchestrator {
   constructor(llmAdapter, onProgress, shouldStop) {
@@ -16,32 +19,53 @@ export class TaskOrchestrator {
   }
 
   /**
-   * Decompose a user request into subtasks using LLM
+   * Decompose a user request into structured, executable subtasks.
+   * Each subtask MUST specify a tool and its args — no free-form LLM steps.
+   * Returns: { title, subtasks: [{ id, title, tool, args, depends_on }] }
    */
   async decompose(userRequest, systemContext) {
-    const prompt = `You are a task planning expert. Analyze this request and decompose it into independent subtasks that can be executed in parallel.
+    const toolList = Array.from(KNOWN_TOOLS).join(', ');
+    const prompt = `You are a task planning expert. Decompose the user's request into a sequence of executable steps.
 
-Return ONLY a JSON object in this exact format (no markdown, no explanation):
+Each step MUST be a concrete tool call. Available tools:
+- shell_execute(command, workdir?) — Execute shell command
+- web_fetch(url, prompt?) — Fetch URL content
+- file_read(path) — Read file contents
+- file_write(path, content, append?) — Write file
+- file_edit(path, old_string, new_string, replace_all?) — Edit file
+- file_list(path?) — List directory
+- file_glob(pattern, path?) — Find files by pattern
+- file_grep(pattern, path?, include?, literal_text?) — Search file contents
+- llm_reason(prompt) — LLM reasoning/synthesis step (use for analysis, summarization, or when no other tool fits)
+
+Return ONLY a JSON object (no markdown, no explanation):
 {
   "title": "Brief overall task title",
-  "canParallelize": true,
   "subtasks": [
     {
       "id": "task-1",
-      "title": "Subtask title",
-      "description": "Detailed description of what this subtask should accomplish",
-      "type": "research|analysis|generation|code|summary",
-      "dependencies": []
+      "title": "Short description of what this step does",
+      "tool": "file_grep",
+      "args": { "pattern": "function.*\\(", "path": "src" },
+      "depends_on": []
+    },
+    {
+      "id": "task-2",
+      "title": "Read the found file",
+      "tool": "file_read",
+      "args": { "path": "src/main.js" },
+      "depends_on": ["task-1"]
     }
   ]
 }
 
 Rules:
 - 1-6 subtasks only
-- Each subtask must be independently executable
-- dependencies[] lists task IDs that must complete first
-- If the request is simple (1 step), return a single subtask
-- Parallel tasks have empty dependencies[]
+- Each subtask MUST have a valid tool from the list above
+- Each subtask MUST have args matching the tool's parameters
+- depends_on lists task IDs that must complete first
+- For the final analysis/summary step, use "llm_reason" with a clear prompt
+- Do NOT include markdown code blocks, just raw JSON
 
 User request: "${userRequest}"`;
 
@@ -55,265 +79,128 @@ User request: "${userRequest}"`;
       // Extract JSON from response
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON in decomposition response');
-      return JSON.parse(jsonMatch[0]);
+
+      const plan = JSON.parse(jsonMatch[0]);
+
+      // Validate and normalize the plan
+      if (!plan.subtasks || !Array.isArray(plan.subtasks)) {
+        throw new Error('Invalid plan: missing subtasks array');
+      }
+
+      // Normalize each subtask: ensure tool is valid, args is object, depends_on is array
+      plan.subtasks = plan.subtasks.map((t, i) => {
+        const id = t.id || `task-${i + 1}`;
+        const tool = t.tool || t.type;
+        if (!tool || !PLANNABLE_TOOLS.has(tool)) {
+          throw new Error(`Invalid tool "${tool}" in subtask ${id}. Must be one of: ${Array.from(PLANNABLE_TOOLS).join(', ')}`);
+        }
+        return {
+          id,
+          title: t.title || `Step ${i + 1}`,
+          tool,
+          args: t.args || t.arguments || {},
+          depends_on: t.depends_on || t.dependencies || [],
+        };
+      });
+
+      return plan;
     } catch (err) {
-      // Fallback: treat entire request as single task
+      // Fallback: single llm_reason task
       return {
         title: userRequest.slice(0, 60),
-        canParallelize: false,
         subtasks: [{
           id: 'task-1',
-          title: 'Execute request',
-          description: userRequest,
-          type: 'general',
-          dependencies: [],
+          title: '直接回答用户问题',
+          tool: 'llm_reason',
+          args: { prompt: userRequest },
+          depends_on: [],
         }],
       };
     }
   }
 
   /**
-   * Execute a single subtask (with tool-calling loop)
-   * Supports Native Function Calling or legacy text-based tool calls
+   * Execute a single structured subtask.
+   * The subtask specifies a tool and args — we execute it directly.
+   * For llm_reason tool, we call the LLM with the prompt + dependency results.
+   * For other tools, we call executeTool() directly.
+   * Guarantees a result for every step.
    */
   async executeSubtask(subtask, context, onChunk) {
-    // Build conversation messages
-    let messages = [
-      { role: 'system', content: context.system + buildToolInstructions(this.useNativeFunctionCalling) },
-      {
-        role: 'user',
-        content: `# Task: ${subtask.title}\n\n${subtask.description}\n\n${context.history ? `Previous context:\n${context.history}` : ''}`,
-      },
-    ];
+    const { id, title, tool, args, depends_on } = subtask;
+
+    this.onProgress({ type: 'subtask_panel', taskId: id, title, instruction: `${tool}(${JSON.stringify(args).slice(0, 200)})` });
+    this.onProgress({ type: 'subtask_start', taskId: id, title });
+
+    // Build dependency context (results from previous steps)
+    const depResults = (context.history || '')
+      .split(/\n\n(?=\[)/)
+      .filter(s => s.trim())
+      .join('\n\n');
+    const depContext = depResults ? `\n\n## Previous step results:\n${depResults}` : '';
 
     let result = '';
-    let toolLoopCount = 0;
-    const MAX_TOOL_LOOPS = 10;
-    
-    // Loop Guard: detect repeated tool calls
-    let lastToolCallKey = null;
-    let repeatCount = 0;
+    let success = true;
 
-    this.onProgress({ type: 'subtask_start', taskId: subtask.id, title: subtask.title });
-
-    while (toolLoopCount < MAX_TOOL_LOOPS) {
-      toolLoopCount++;
-
-      // Check if stop requested
+    try {
       if (this.shouldStop()) {
-        return { success: false, error: 'Task stopped by user', partial: result };
+        return { id, title, result: 'Task stopped by user', status: 'stopped' };
       }
 
-      let llmResponse = '';
-      let toolCalls = [];
+      if (tool === 'llm_reason') {
+        // LLM reasoning step: stream output, accumulate as result
+        this.onProgress({ type: 'subtask_thinking', taskId: id, loop: 1 });
+        const prompt = args.prompt || args.description || title;
+        const messages = [
+          { role: 'system', content: context.system || 'You are a helpful assistant.' },
+          { role: 'user', content: `${prompt}${depContext}` },
+        ];
 
-      // Stream LLM response, collecting full text
-      this.onProgress({ type: 'subtask_thinking', taskId: subtask.id, loop: toolLoopCount });
-      
-      if (this.useNativeFunctionCalling) {
-        // Native Function Calling mode
-        const streamResult = this._collectStreamWithToolCalls(messages, onChunk, subtask.id);
-        llmResponse = streamResult.text;
-        toolCalls = streamResult.toolCalls;
-      } else {
-        // Legacy mode: stream text, then parse tool_call blocks
         for await (const chunk of this.llm.stream(messages, { temperature: 0.7 })) {
-          llmResponse += chunk;
-          if (onChunk) onChunk(subtask.id, chunk);
-          this.onProgress({ type: 'subtask_chunk', taskId: subtask.id, chunk });
-        }
-        // Parse legacy tool_call block
-        const legacyCall = this._parseLegacyToolCall(llmResponse);
-        if (legacyCall) {
-          toolCalls = [legacyCall];
-        }
-      }
-
-      // No tool calls → final answer
-      if (toolCalls.length === 0) {
-        result = llmResponse;
-        break;
-      }
-
-      // Process each tool call
-      for (const toolCall of toolCalls) {
-        const { name, arguments: args } = toolCall;
-
-        // Strict whitelist check
-        if (!KNOWN_TOOLS.has(name)) {
-          this.onProgress({
-            type: 'tool_result',
-            taskId: subtask.id,
-            success: false,
-            output: `Error: Unknown tool "${name}". Available tools: ${Array.from(KNOWN_TOOLS).join(', ')}`,
-          });
-          continue;
-        }
-
-        // Loop Guard: detect repeated calls
-        const callKey = `${name}:${JSON.stringify(args)}`;
-        if (callKey === lastToolCallKey) {
-          repeatCount++;
-          if (repeatCount >= 2) {
-            this.onProgress({
-              type: 'tool_result',
-              taskId: subtask.id,
-              success: false,
-              output: `Error: Repeated tool call detected. Stopping to prevent infinite loop.`,
-            });
-            result = llmResponse + '\n\n[Tool loop detected and prevented]';
-            break;
+          if (typeof chunk === 'string') {
+            result += chunk;
+            if (onChunk) onChunk(id, chunk);
+            this.onProgress({ type: 'subtask_chunk', taskId: id, chunk });
+          } else if (chunk.type === 'text') {
+            result += chunk.content;
+            if (onChunk) onChunk(id, chunk.content);
+            this.onProgress({ type: 'subtask_chunk', taskId: id, chunk: chunk.content });
           }
-        } else {
-          repeatCount = 0;
         }
-        lastToolCallKey = callKey;
+      } else {
+        // Concrete tool execution
+        this.onProgress({ type: 'tool_call', taskId: id, tool, args });
 
-        this.onProgress({
-          type: 'tool_call',
-          taskId: subtask.id,
-          tool: name,
-          args,
-        });
-
-        // Execute the tool
-        const toolResult = await executeTool({
-          name,
-          arguments: args || {},
-        });
+        const toolResult = await executeTool({ name: tool, arguments: args || {} });
 
         this.onProgress({
           type: 'tool_result',
-          taskId: subtask.id,
+          taskId: id,
           success: toolResult.success,
-          output: toolResult.output.slice(0, 2000), // truncate for display
+          output: toolResult.output.slice(0, 2000),
         });
 
-        // Add assistant response (with tool call) and tool result to messages
-        if (this.useNativeFunctionCalling) {
-          // Native mode: add assistant message with tool_calls, then tool result
-          messages.push({
-            role: 'assistant',
-            content: llmResponse,
-            tool_calls: toolCalls.map((tc, i) => ({
-              id: tc.id || `call_${Date.now()}_${i}`,
-              type: 'function',
-              function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
-            })),
-          });
-          messages.push({
-            role: 'tool',
-            tool_call_id: toolCalls[0].id || `call_${Date.now()}_0`,
-            content: toolResult.output,
-          });
-        } else {
-          // Legacy mode: add text with tool_call block
-          messages.push({
-            role: 'assistant',
-            content: llmResponse,
-          });
-          messages.push({
-            role: 'user',
-            content: `Tool result (${name}):\n\`\`\`json\n${toolResult.output}\n\`\`\`\n\nContinue with the task. If you have the final answer, provide it. Otherwise, call another tool.`,
-          });
-        }
-
-        // Trim messages to avoid token overflow
-        if (messages.length > 20) {
-          messages = [messages[0], ...messages.slice(-18)];
-        }
-      }
-
-      // Check loop guard break
-      if (repeatCount >= 2) {
-        break;
-      }
-    }
-
-    if (toolLoopCount >= MAX_TOOL_LOOPS) {
-      result += '\n\n[Tool loop limit reached]';
-    }
-
-    this.onProgress({ type: 'subtask_done', taskId: subtask.id, result });
-    return { id: subtask.id, title: subtask.title, result, status: 'done' };
-  }
-
-  /**
-   * Collect stream output and detect tool_calls (for native function calling)
-   */
-  async _collectStreamWithToolCalls(messages, onChunk, taskId) {
-    let text = '';
-    let toolCalls = [];
-    let waitingForToolCall = false;
-    let currentToolCall = null;
-
-    // Add tools to messages for this call
-    const llmWithTools = this.llm.withTools?.(TOOL_SCHEMAS_OPENAI) || this.llm;
-
-    try {
-      for await (const event of llmWithTools.stream(messages, {
-        temperature: 0.7,
-        tools: TOOL_SCHEMAS_OPENAI,
-      })) {
-        // Handle structured events
-        if (typeof event === 'object') {
-          if (event.type === 'text') {
-            text += event.content;
-            if (onChunk) onChunk(taskId, event.content);
-            this.onProgress({ type: 'subtask_chunk', taskId, chunk: event.content });
-          } else if (event.type === 'tool_call') {
-            toolCalls.push(event);
-            this.onProgress({ type: 'tool_call', taskId, tool: event.name, args: event.arguments });
-          }
-        } else {
-          // String chunk (legacy)
-          text += event;
-          if (onChunk) onChunk(taskId, event);
-          this.onProgress({ type: 'subtask_chunk', taskId, chunk: event });
-        }
+        result = toolResult.output;
+        success = toolResult.success;
       }
     } catch (err) {
-      console.error('Stream error:', err);
+      result = `Error executing ${tool}: ${err.message}`;
+      success = false;
+      this.onProgress({
+        type: 'tool_result',
+        taskId: id,
+        success: false,
+        output: result,
+      });
     }
 
-    return { text, toolCalls };
+    this.onProgress({ type: 'subtask_done', taskId: id, result });
+    return { id, title, result, status: success ? 'done' : 'error' };
   }
 
   /**
-   * Parse legacy tool_call block with strict whitelist
-   */
-  _parseLegacyToolCall(response) {
-    // Only recognize ```tool_call code blocks, not bare JSON in body
-    const toolCallMatch = response.match(/```tool_call\s*\n([\s\S]*?)\n```/);
-    if (!toolCallMatch) {
-      return null;
-    }
-
-    let toolCall;
-    try {
-      toolCall = JSON.parse(toolCallMatch[1].trim());
-    } catch {
-      return null;
-    }
-
-    if (!toolCall || !toolCall.tool) {
-      return null;
-    }
-
-    // Strict whitelist check
-    if (!KNOWN_TOOLS.has(toolCall.tool)) {
-      console.warn(`[Legacy] Unknown tool: ${toolCall.tool}`);
-      return null;
-    }
-
-    return {
-      name: toolCall.tool,
-      arguments: toolCall.arguments || {},
-    };
-  }
-
-  /**
-   * Run all subtasks in parallel (respecting dependencies)
+   * Run all subtasks respecting dependencies.
+   * Each subtask is a direct tool call (no LLM-driven tool loop).
    */
   async executeAll(plan, context, onChunk) {
     const results = new Map();
@@ -321,7 +208,7 @@ User request: "${userRequest}"`;
     const running = new Set();
 
     const isReady = (task) =>
-      task.dependencies.every(dep => results.has(dep) && results.get(dep).status === 'done');
+      (task.depends_on || []).every(dep => results.has(dep) && results.get(dep).status === 'done');
 
     while (pending.size > 0 || running.size > 0) {
       // Launch all ready tasks
@@ -331,7 +218,7 @@ User request: "${userRequest}"`;
           pending.delete(id);
 
           // Build context with dependency results
-          const depResults = task.dependencies
+          const depResults = (task.depends_on || [])
             .map(dep => results.get(dep))
             .filter(Boolean)
             .map(r => `[${r.title}]\n${r.result}`)
@@ -350,7 +237,6 @@ User request: "${userRequest}"`;
       }
 
       if (running.size > 0) {
-        // Wait a bit for tasks to complete
         await new Promise(r => setTimeout(r, 100));
       } else if (pending.size > 0) {
         // Stuck with pending but no running — dependency deadlock
@@ -365,7 +251,8 @@ User request: "${userRequest}"`;
   }
 
   /**
-   * Synthesize final answer from all subtask results
+   * Synthesize final answer from all subtask results.
+   * If there's only one result, return it directly.
    */
   async synthesize(originalRequest, subtaskResults, context) {
     if (subtaskResults.length === 1) {
@@ -380,7 +267,7 @@ User request: "${userRequest}"`;
       { role: 'system', content: context.system },
       {
         role: 'user',
-        content: `Original request: "${originalRequest}"\n\nHere are the results from ${subtaskResults.length} parallel subtasks:\n\n${resultsSummary}\n\nSynthesize these results into a clear, comprehensive final answer. Present it in a well-organized, readable format.`,
+        content: `Original request: "${originalRequest}"\n\nHere are the results from ${subtaskResults.length} subtasks:\n\n${resultsSummary}\n\nSynthesize these results into a clear, comprehensive final answer. Present it in a well-organized, readable format.`,
       },
     ];
 
@@ -388,8 +275,13 @@ User request: "${userRequest}"`;
     this.onProgress({ type: 'synthesis_start' });
 
     for await (const chunk of this.llm.stream(messages, { temperature: 0.5 })) {
-      synthesis += chunk;
-      this.onProgress({ type: 'synthesis_chunk', chunk });
+      if (typeof chunk === 'string') {
+        synthesis += chunk;
+        this.onProgress({ type: 'synthesis_chunk', chunk });
+      } else if (chunk.type === 'text') {
+        synthesis += chunk.content;
+        this.onProgress({ type: 'synthesis_chunk', chunk: chunk.content });
+      }
     }
 
     this.onProgress({ type: 'synthesis_done' });

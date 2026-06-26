@@ -391,7 +391,7 @@
       background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm);
       font-size: 13px; color: var(--text); box-shadow: var(--shadow);
       transform: translateY(100px); opacity: 0; transition: all 0.3s;
-      z-index: 999;
+      z-index: 9999;
     }
     #toast.show { transform: translateY(0); opacity: 1; }
     #toast.success { border-color: var(--green); color: var(--green); }
@@ -466,10 +466,184 @@
       border-top: 1px solid var(--border); background: var(--bg3);
     }
 
+  /* ── Subtask Panel ─────────────────────────────────── */
+  .subtask-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    width: 100%;
+    max-width: 900px;
+    align-self: flex-start;
+    margin-bottom: 12px;
+  }
+  .subtask-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .subtask-panel-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent2);
+  }
+  .subtask-panel-status {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-left: auto;
+  }
+  .subtask-panel-status.running {
+    background: #2a1f5a;
+    color: var(--accent2);
+  }
+  .subtask-panel-status.done {
+    background: #0f2e1f;
+    color: var(--green);
+  }
+  .subtask-panel-status.error {
+    background: #2e0f0f;
+    color: var(--red);
+  }
+  .subtask-panel-section {
+    margin-bottom: 10px;
+  }
+  .subtask-panel-label {
+    font-size: 11px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .subtask-panel-instruction {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  .subtask-panel-output {
+    width: 100%;
+    min-height: 100px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-y: auto;
+    max-height: 400px;
+    font-family: 'SF Mono', 'Monaco', monospace;
+  }
+
+  /* ── Log Panel ──────────────────────────────── */
+  #log-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    transition: height 0.2s;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
+  }
+  #log-panel.collapsed { height: 32px; }
+  #log-panel.expanded { height: 240px; }
+  /* Chat area adjusts for log panel */
+  #app.with-log-expanded { padding-bottom: 240px; }
+  #app.with-log-collapsed { padding-bottom: 32px; }
+  #log-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text);
+  }
+  #log-toggle:hover { background: var(--bg4); }
+  #log-toggle .badge {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 10px;
+    min-width: 18px;
+    text-align: center;
+  }
+  #log-toggle .arrow { margin-left: auto; transition: transform 0.2s; }
+  #log-toggle .arrow.down { transform: rotate(0deg); }
+  #log-toggle .arrow.up { transform: rotate(180deg); }
+  #log-body {
+    overflow-y: auto;
+    height: calc(100% - 32px);
+    padding: 4px 8px;
+  }
+  .log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 2px 4px;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.5;
+  }
+  .log-entry:hover { background: var(--bg4); }
+  .log-time { color: #888; font-size: 10px; white-space: nowrap; min-width: 70px; }
+  .log-level {
+    font-weight: 600;
+    font-size: 10px;
+    padding: 0 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    min-width: 36px;
+    text-align: center;
+  }
+  .log-level.info { color: var(--blue); background: color-mix(in srgb, var(--blue) 15%, transparent); }
+  .log-level.warn { color: var(--yellow); background: color-mix(in srgb, var(--yellow) 15%, transparent); }
+  .log-level.error { color: var(--red); background: color-mix(in srgb, var(--red) 15%, transparent); }
+  .log-msg { flex: 1; color: var(--text); word-break: break-all; }
+  #log-clear {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    opacity: 0.6;
+  }
+  #log-clear:hover { opacity: 1; background: var(--bg4); }
+
+  .model-badge {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--text2);
+    background: var(--bg3);
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
   </style>
 </head>
 <body>
-<div id="app">
+<div id="app" class="with-log-expanded">
   <!-- Topbar -->
   <header id="topbar">
     <div class="logo">
@@ -682,6 +856,14 @@
 let ws = null;
 let wsReady = false;
 const WS_URL = `ws://${location.host}`;
+// Model list cache (loaded from /api/models/:provider)
+window._modelsCache = {};
+
+// Last saved config (for change detection in saveSettings)
+let _lastSavedConfig = null;
+
+// Current model alias (displayed next to AI response)
+let _currentModelAlias = '';
 
 // Subtask tracking
 let currentPlanCard = null;
@@ -690,6 +872,114 @@ let subtaskStreams = {};
 let currentAssistantBubble = null;
 let isThinking = false;
 
+// ── Subtask Panel（子任务面板）─────────────────────────────
+let subtaskPanels = {};
+
+function renderSubtaskPanel(taskId, title, instruction) {
+  hideWelcome();
+  const container = document.getElementById('messages');
+  const panelId = `panel-${taskId}`;
+
+  // 如果已存在则不再重复创建
+  if (document.getElementById(panelId)) return;
+
+  const el = document.createElement('div');
+  el.className = 'subtask-panel';
+  el.id = panelId;
+  el.innerHTML = `
+    <div class="subtask-panel-header">
+      <span class="subtask-panel-title">${escapeHtml(title)}</span>
+      <span class="subtask-panel-status running">运行中...</span>
+    </div>
+    <div class="subtask-panel-section">
+      <div class="subtask-panel-label">指令（Instruction）</div>
+      <textarea class="subtask-panel-instruction" readonly>${escapeHtml(instruction || '')}</textarea>
+    </div>
+    <div class="subtask-panel-section">
+      <div class="subtask-panel-label">输出（Output）</div>
+      <div class="subtask-panel-output" id="panel-output-${taskId}"></div>
+    </div>
+  `;
+
+  container.appendChild(el);
+  subtaskPanels[taskId] = panelId;
+  scrollToBottom();
+}
+
+function updateSubtaskPanelOutput(taskId, chunk) {
+  const outputEl = document.getElementById(`panel-output-${taskId}`);
+  if (!outputEl) return;
+  outputEl.textContent += chunk;
+  scrollToBottom();
+}
+
+function finalizeSubtaskPanel(taskId, status) {
+  const panel = document.getElementById(`panel-${taskId}`);
+  if (!panel) return;
+
+  const statusEl = panel.querySelector('.subtask-panel-status');
+  if (statusEl) {
+    statusEl.textContent = status === 'done' ? '✅ 完成' : (status === 'error' ? '❌ 失败' : status);
+    statusEl.className = `subtask-panel-status ${status}`;
+  }
+}
+
+// ── Log Panel ──────────────────────────────────────────
+let logCount = 0;
+const MAX_LOG = 200;
+
+function appendLog(level, message, data) {
+  logCount++;
+  document.getElementById('log-badge').textContent = logCount > 99 ? '99+' : logCount;
+
+  const body = document.getElementById('log-body');
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+
+  const time = new Date().toLocaleTimeString();
+  let msg = escapeHtml(message);
+  // Append optional data info
+  if (data && typeof data === 'object') {
+    const extra = Object.entries(data)
+      .filter(([,v]) => v !== null && v !== undefined)
+      .map(([k,v]) => `${k}=${typeof v === 'string' ? v.slice(0,60) : v}`)
+      .join(' ');
+    if (extra) msg += ` <span style="color:#888;font-size:11px">${escapeHtml(extra)}</span>`;
+  } else if (typeof data === 'string') {
+    msg += ` <span style="color:#888;font-size:11px">${escapeHtml(data.slice(0,80))}</span>`;
+  }
+  el.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-msg">${msg}</span>`;
+  body.appendChild(el);
+
+  // Auto-scroll if near bottom
+  const nearBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 40;
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+
+  // Trim excess
+  while (body.children.length > MAX_LOG) body.removeChild(body.firstChild);
+}
+
+function toggleLogPanel() {
+  const panel = document.getElementById('log-panel');
+  const app = document.getElementById('app');
+  const isCollapsed = panel.classList.contains('collapsed');
+  panel.classList.toggle('collapsed');
+  panel.classList.toggle('expanded');
+  document.getElementById('log-arrow').className = isCollapsed ? 'arrow up' : 'arrow down';
+  // Adjust chat area so input is not covered by the log panel
+  app.className = isCollapsed ? 'with-log-expanded' : 'with-log-collapsed';
+  // Scroll the chat to bottom after layout shift
+  scrollToBottom();
+  // Reset badge when expanded
+  if (isCollapsed) clearLogs();
+}
+
+function clearLogs() {
+  document.getElementById('log-body').innerHTML = '';
+  logCount = 0;
+  document.getElementById('log-badge').textContent = '0';
+}
+
 function connect() {
   ws = new WebSocket(WS_URL);
 
@@ -697,7 +987,7 @@ function connect() {
     wsReady = true;
     setStatus('connected', 'Connected');
     startHeartbeat();
-  };
+  }
 
   ws.onclose = () => {
     wsReady = false;
@@ -728,26 +1018,35 @@ function setStatus(state, text) {
 
 // ── Heartbeat ──────────────────────────────────────
 let heartBeatInterval = null;
+let heartBeatCount = 0;
 
 function startHeartbeat() {
   stopHeartbeat();
   
   async function doHeartbeat() {
+    heartBeatCount++;
     try {
       const resp = await fetch('/api/status');
       if (!resp.ok) {
         updateStatusUI('error', 'Status check failed');
+        appendLog('warn', `💔 心跳检测失败 (HTTP ${resp.status})`);
         return;
       }
       const status = await resp.json();
       updateStatusFromStatus(status);
+      // Log heartbeat every other cycle (~30s since we do it every 30s, so ~60s)
+      if (heartBeatCount % 1 === 0) {
+        const modelStatus = status.model === 'ok' ? '✅' : status.model === 'error' ? '❌' : '⏳';
+        appendLog('info', `💓 心跳 #${heartBeatCount} | 模型: ${modelStatus} ${status.modelMessage || ''}`);
+      }
     } catch {
       updateStatusUI('error', 'Backend unreachable');
+      appendLog('error', `💔 心跳检测失败 - 后端不可达`);
     }
   }
   
   doHeartbeat();
-  heartBeatInterval = setInterval(doHeartbeat, 60000);
+  heartBeatInterval = setInterval(doHeartbeat, 30000);
 }
 
 function stopHeartbeat() {
@@ -788,7 +1087,14 @@ function updateStatusUI(state, text) {
 function handleMessage(msg) {
   const { type } = msg;
 
+  // Log messages go to the log panel
+  if (type === 'log') {
+    appendLog(msg.level, `[${msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}] ${msg.message}`);
+    return;
+  }
+
   if (type === 'session_init') {
+    appendLog('info', '🟢 WebSocket 已连接');
     loadConfig();
     loadSkills();
     loadIdentity();
@@ -808,35 +1114,47 @@ function handleMessage(msg) {
     renderPlanCard(msg.plan);
   }
 
+  else if (type === 'subtask_panel') {
+    renderSubtaskPanel(msg.taskId, msg.title, msg.instruction);
+  }
+
   else if (type === 'subtask_start') {
     updateSubtaskCard(msg.taskId, 'running');
+    appendLog('info', `▶️ 开始执行子任务: ${msg.title || msg.taskId}`);
   }
 
   else if (type === 'subtask_chunk') {
     appendSubtaskStream(msg.taskId, msg.chunk);
+    updateSubtaskPanelOutput(msg.taskId, msg.chunk);
   }
 
   else if (type === 'subtask_done') {
     updateSubtaskCard(msg.taskId, 'done');
+    finalizeSubtaskPanel(msg.taskId, 'done');
+    appendLog('info', `✅ 子任务完成: ${msg.taskId}`);
   }
 
   else if (type === 'subtask_error') {
     updateSubtaskCard(msg.taskId, 'error');
+    finalizeSubtaskPanel(msg.taskId, 'error');
+    appendLog('error', `❌ 子任务失败: ${msg.taskId}${msg.message ? ' - ' + msg.message : ''}`);
   }
 
   else if (type === 'subtask_thinking') {
     showStatus(`🤔 Subtask thinking (loop ${msg.loop || 1})...`, 'thinking');
+    appendLog('info', `🤖 LLM API 请求中 (循环 ${msg.loop || 1})`);
   }
 
   else if (type === 'tool_call') {
     showStatus(`🔧 Calling tool: ${msg.tool}...`, 'thinking');
-    // Optionally render tool call in chat
     renderToolCall(msg.tool, msg.args);
+    appendLog('warn', `🔧 调用工具: ${msg.tool}`, msg.args ? JSON.stringify(msg.args).slice(0, 80) : '');
   }
 
   else if (type === 'tool_result') {
     removeStatus();
     renderToolResult(msg.success, msg.output);
+    appendLog(msg.success ? 'info' : 'warn', `🔧 工具返回: ${msg.success ? '成功' : '失败'}`);
   }
 
   else if (type === 'synthesizing') {
@@ -851,12 +1169,14 @@ function handleMessage(msg) {
 
   else if (type === 'synthesis_done') {
     removeStatus();
+    appendLog('info', `✨ 结果综合完成`);
   }
 
   else if (type === 'done') {
     removeStatus();
     isThinking = false;
     setSendEnabled(true);
+    appendLog('info', `✅ 回答完成，返回给用户`, { length: (msg.content || '').length });
 
     // Toggle buttons: hide Stop, show Send
     document.getElementById('stop-btn').style.display = 'none';
@@ -894,7 +1214,20 @@ function handleMessage(msg) {
 
   else if (type === 'config_saved') {
     showToast('Settings saved', 'success');
-    loadConfig();
+    // Update last saved config
+    const provider = document.getElementById('cfg-provider').value;
+    const model = document.getElementById('cfg-model').value;
+    const baseURL = document.getElementById('cfg-baseurl').value;
+    const temperature = parseFloat(document.getElementById('cfg-temp').value);
+    _lastSavedConfig = {
+      provider,
+      model,
+      baseURL,
+      temperature,
+      hasApiKey: !!(document.getElementById('cfg-apikey').value && document.getElementById('cfg-apikey').value !== '***'),
+    };
+    // Reload models to pick up newly added model
+    loadAllModels().catch(() => {});
   }
 
   else if (type === 'history_cleared') {
@@ -1168,9 +1501,13 @@ function renderAssistantMessage(content) {
   const container = document.getElementById('messages');
   const el = document.createElement('div');
   el.className = 'message assistant';
+  const badgeHtml = _currentModelAlias ? `<div class="model-badge">${_currentModelAlias}</div>` : '';
   el.innerHTML = `
     <div class="avatar">AI</div>
-    <div class="bubble"><div class="md-content">${marked.parse(content)}</div></div>
+    <div class="bubble">
+      ${badgeHtml}
+      <div class="md-content">${marked.parse(content)}</div>
+    </div>
   `;
   container.appendChild(el);
   scrollToBottom();
@@ -1313,6 +1650,12 @@ function sendMessage() {
   if (!text || !wsReady || isThinking) return;
 
   renderUserMessage(text);
+
+  // Update current model alias for display in AI response
+  const sendProvider = document.getElementById('cfg-provider').value;
+  const sendModel = document.getElementById('cfg-model').value;
+  _currentModelAlias = getModelAlias(sendModel) || sendProvider;
+
   input.value = '';
   autoResize(input);
   setSendEnabled(false);
@@ -1414,12 +1757,13 @@ function onProviderChange(keepModel = false) {
   const baseurlGroup = document.getElementById('baseurl-group');
   const baseurlInput = document.getElementById('cfg-baseurl');
 
-  // Populate datalist suggestions
-  datalist.innerHTML = (MODELS[p] || []).map(m => `<option value="${m}">`).join('');
+  // Populate datalist from API cache or fallback to MODELS
+  const allModels = getModelsForProvider(p);
+  datalist.innerHTML = allModels.map(m => `<option value="${m}">`).join('');
 
   // Only reset model value when explicitly switching providers (not on loadConfig)
   if (!keepModel) {
-    modelInput.value = DEFAULT_MODELS[p] || (MODELS[p] || [''])[0] || '';
+    modelInput.value = DEFAULT_MODELS[p] || allModels[0] || '';
   }
 
   // Show/hide base URL field; auto-fill default if field is empty
@@ -1439,45 +1783,131 @@ function onProviderChange(keepModel = false) {
 }
 
 function saveSettings() {
-  const cfg = {
-    provider: document.getElementById('cfg-provider').value,
-    apiKey:   document.getElementById('cfg-apikey').value,
-    model:    document.getElementById('cfg-model').value,
-    baseURL:  document.getElementById('cfg-baseurl').value,
-    temperature: parseFloat(document.getElementById('cfg-temp').value),
-  };
+  try {
+    const provider = document.getElementById('cfg-provider').value;
+    const model = document.getElementById('cfg-model').value;
+    const apiKey = document.getElementById('cfg-apikey').value;
+    const baseURL = document.getElementById('cfg-baseurl').value;
+    const temperature = parseFloat(document.getElementById('cfg-temp').value);
 
-  // Prefer WebSocket if ready, otherwise fall back to HTTP POST
-  if (wsReady) {
-    ws.send(JSON.stringify({ type: 'config_update', config: cfg }));
-  } else {
-    fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg),
-    })
-      .then(r => r.json())
-      .then(() => showToast('Settings saved', 'success'))
-      .catch(() => showToast('Save failed — is the server running?', 'error'));
+    const cfg = {
+      provider: provider,
+      apiKey:   apiKey,
+      model:    model,
+      baseURL:  baseURL,
+      temperature: temperature,
+    };
+
+    // Detect if there are any changes (compare with last saved config)
+    let hasChanges = false;
+    if (_lastSavedConfig) {
+      if (_lastSavedConfig.provider !== provider) hasChanges = true;
+      if (_lastSavedConfig.model !== model) hasChanges = true;
+      if (_lastSavedConfig.baseURL !== baseURL) hasChanges = true;
+      if (_lastSavedConfig.temperature !== temperature) hasChanges = true;
+      // API key changed if field is not empty and not '***'
+      if (apiKey && apiKey !== '***') hasChanges = true;
+    } else {
+      hasChanges = true; // first save, always has changes
+    }
+
+    if (!hasChanges) {
+      showToast('没有改动', 'info');
+      return;
+    }
+
+    // If API key field is empty but user previously had one (showed '***'),
+    // preserve it by sending '***' so backend keeps the existing key.
+    if (!apiKey && window._hasApiKey) {
+      cfg.apiKey = '***';
+    }
+
+    // Immediately show saving toast
+    showToast('Saving...', 'info');
+
+    // Prefer WebSocket if ready, otherwise fall back to HTTP POST
+    if (wsReady) {
+      ws.send(JSON.stringify({ type: 'config_update', config: cfg }));
+      // Toast will be updated when server responds with 'config_saved'
+    } else {
+      fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      })
+        .then(r => r.json())
+        .then(() => {
+          showToast('Settings saved', 'success');
+          // Update last saved config
+          _lastSavedConfig = { provider, model, baseURL, temperature, hasApiKey: !!(apiKey && apiKey !== '***') };
+        })
+        .catch(() => showToast('Save failed — is the server running?', 'error'));
+    }
+  } catch (err) {
+    showToast('Save error: ' + err.message, 'error');
   }
 }
 
-function loadConfig() {
-  fetch('/api/config').then(r => r.json()).then(cfg => {
+// ── Model List (loaded from backend API: /api/models/:provider) ───────────────────────────────────────
+async function loadAllModels() {
+  const providers = ['qgenie', 'local', 'openai', 'anthropic', 'openrouter'];
+  window._modelsCache = {};
+  for (const p of providers) {
+    try {
+      const res = await fetch(`/api/models/${p}`);
+      const data = await res.json();
+      window._modelsCache[p] = data.models || [];
+    } catch (e) {
+      console.warn(`[Models] Failed to load ${p} models, using fallback:`, e.message);
+      window._modelsCache[p] = (MODELS[p] || []).slice();
+    }
+  }
+  console.log('[Models] Loaded model lists from backend');
+}
+
+function getModelsForProvider(provider) {
+  return window._modelsCache[provider] || MODELS[provider] || [];
+}
+
+async function loadConfig() {
+  // Load models first (from backend API)
+  try {
+    await loadAllModels();
+  } catch (e) {
+    console.warn('[Models] Failed to load models, using fallback:', e.message);
+  }
+
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
     const provider = cfg.provider || 'openrouter';
     document.getElementById('cfg-provider').value = provider;
-    onProviderChange(true); // populate datalist first, keep model untouched
-    document.getElementById('cfg-model').value = cfg.model || DEFAULT_MODELS[provider] || 'gpt-4o';
-    // Restore saved base URL; if openrouter and no saved URL, apply the default
+    onProviderChange(true); // populate datalist from cache
+    const model = cfg.model || DEFAULT_MODELS[provider] || 'gpt-4o';
+    document.getElementById('cfg-model').value = model;
+    // No need to manually add model - backend auto-adds to models.json on save
+    // Restore saved base URL
     const savedURL = cfg.baseURL || (provider === 'openrouter' ? DEFAULT_BASE_URLS.openrouter : '');
     document.getElementById('cfg-baseurl').value = savedURL;
-    // Make sure the base URL row is visible for openrouter
     document.getElementById('baseurl-group').style.display = provider === 'openrouter' ? 'flex' : 'none';
     document.getElementById('cfg-temp').value = cfg.temperature ?? 0.7;
     document.getElementById('temp-val').textContent = cfg.temperature ?? 0.7;
     document.getElementById('provider-badge').textContent =
       (cfg.provider || 'openrouter').charAt(0).toUpperCase() + (cfg.provider || 'openrouter').slice(1);
-  }).catch(() => {});
+    document.getElementById('cfg-apikey').value = cfg.hasApiKey ? '***' : '';
+    window._hasApiKey = Boolean(cfg.hasApiKey);
+
+    // Store last saved config for change detection
+    _lastSavedConfig = {
+      provider: cfg.provider || 'openrouter',
+      model: cfg.model || '',
+      baseURL: cfg.baseURL || '',
+      temperature: cfg.temperature ?? 0.7,
+      hasApiKey: cfg.hasApiKey || false,
+    };
+  } catch (e) {
+    console.warn('[Config] Failed to load config:', e.message);
+  }
 
   // Load Feishu config
   loadFeishuConfig();
@@ -1939,7 +2369,26 @@ function showToast(msg, type = '') {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = `show ${type}`;
-  setTimeout(() => t.className = '', 3000);
+  // Clear any existing timer to avoid conflicts
+  if (t._timer) clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.className = ''; t._timer = null; }, 3000);
+}
+
+function getModelAlias(modelName) {
+  if (!modelName) return '';
+  const aliases = {
+    'gpt-4o': 'GPT-4o',
+    'gpt-4o-mini': 'GPT-4o Mini',
+    'claude-opus-4-5': 'Claude Opus 4.5',
+    'claude-sonnet-4-5': 'Claude Sonnet 4.5',
+    'deepseek/deepseek-v4-flash': 'DeepSeek V4',
+    'deepseek/deepseek-chat': 'DeepSeek Chat',
+    'nvidia/nemotron-3-super-120b-a12b:free': 'Nemotron 3',
+  };
+  if (aliases[modelName]) return aliases[modelName];
+  // Extract last part after /
+  const parts = modelName.split('/');
+  return parts[parts.length - 1] || modelName;
 }
 
 function toggleToolOutput(id) {
@@ -1962,5 +2411,14 @@ function toggleToolOutput(id) {
 connect();
 setSendEnabled(true);
 </script>
+  <!-- Log Panel -->
+  <div id="log-panel" class="expanded">
+    <div id="log-toggle" onclick="toggleLogPanel()">
+      <span>📋 日志</span>
+      <span class="badge" id="log-badge">0</span>
+      <span class="arrow down" id="log-arrow">▾</span>
+    </div>
+    <div id="log-body"></div>
+  </div>
 </body>
 </html>

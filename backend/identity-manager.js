@@ -78,8 +78,9 @@ export class IdentityManager {
    * Removes any accidental leakage of ID/DNA/Soul content.
    */
   filterOutput(text) {
+    if (!text) return text;
     for (const file of Object.values(this.files)) {
-      if (!file) continue;
+      if (!file || !file.content) continue;
       // Remove exact content blocks
       text = text.replace(file.content, '[identity content hidden]');
       // Remove XML identity tags
