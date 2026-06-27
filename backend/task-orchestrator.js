@@ -8,7 +8,7 @@ import { executeTool, buildToolInstructions, TOOL_SCHEMAS_OPENAI, KNOWN_TOOLS } 
 
 // 可在分解计划中使用的"工具"白名单
 // 包含真实工具 + 一个特殊的 llm_reason（用于需要 LLM 推理/综合的步骤）
-const PLANNABLE_TOOLS = new Set([...KNOWN_TOOLS, 'llm_reason']);
+const PLANABLE_TOOLS = new Set([...KNOWN_TOOLS, 'llm_reason']);
 
 export class TaskOrchestrator {
   constructor(llmAdapter, onProgress, shouldStop, { permissionManager, snapshotManager } = {}) {
@@ -27,17 +27,164 @@ export class TaskOrchestrator {
    * Returns: { title, subtasks: [{ id, title, purpose, tool, args, depends_on }] }
    */
   async decompose(userRequest, systemContext) {
-    // Simple decomposition: create a single llm_reason task
-    return {
-      title: userRequest.slice(0, 60),
-      subtasks: [{
-        id: "task-1",
-        title: "Answer user question",
-        tool: "llm_reason",
-        args: { prompt: userRequest },
-        depends_on: [],
-      }],
-    };
+    // Use LLM to decompose the task
+    const messages = [
+      { role: 'system', content: this._buildDecompositionPrompt() },
+      { role: 'user', content: `User request: ${userRequest}\n\nProject context: ${systemContext || 'General purpose'}` },
+    ];
+
+    try {
+      const llmResponse = await this.llm.chat(messages, {
+        temperature: 0.3,
+        maxTokens: 2000,
+        tools: this.useNativeFunctionCalling ? TOOL_SCHEMAS_OPENAI : undefined,
+      });
+
+      // Try to parse the response as JSON
+      let decomposition;
+      try {
+        // Extract JSON from response (might be wrapped in markdown)
+        const jsonMatch = llmResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || llmResponse.match(/(\{[\s\S]*\})/);
+        const jsonStr = jsonMatch ? jsonMatch[1] : llmResponse;
+        decomposition = JSON.parse(jsonStr);
+      } catch (parseErr) {
+        console.error('[TaskOrchestrator] Failed to parse decomposition:', parseErr.message);
+        // Fallback: create a single llm_reason task
+        return {
+          title: userRequest.slice(0, 60),
+          subtasks: [{
+            id: "task-1",
+            title: "Answer user question",
+            tool: "llm_reason",
+            args: { prompt: userRequest },
+            depends_on: [],
+          }],
+        };
+      }
+
+      // Validate decomposition structure
+      if (!decomposition.subtasks || !Array.isArray(decomposition.subtasks)) {
+        throw new Error('Invalid decomposition: missing subtasks array');
+      }
+
+      // Validate and normalize each subtask
+      const validatedSubtasks = [];
+      for (const [index, subtask] of decomposition.subtasks.entries()) {
+        if (!subtask.tool) {
+          console.warn(`[TaskOrchestrator] Subtask ${index} missing tool, skipping`);
+          continue;
+        }
+
+        // Validate tool exists
+        if (!PLANABLE_TOOLS.has(subtask.tool)) {
+          console.warn(`[TaskOrchestrator] Unknown tool: ${subtask.tool}, converting to llm_reason`);
+          subtask.tool = 'llm_reason';
+        }
+
+        // Ensure required fields
+        validatedSubtasks.push({
+          id: subtask.id || `task-${index + 1}`,
+          title: subtask.title || `Step ${index + 1}`,
+          purpose: subtask.purpose || '',
+          tool: subtask.tool,
+          args: subtask.args || {},
+          depends_on: subtask.depends_on || [],
+        });
+      }
+
+      return {
+        title: decomposition.title || userRequest.slice(0, 60),
+        subtasks: validatedSubtasks,
+      };
+    } catch (err) {
+      console.error('[TaskOrchestrator] Decomposition failed:', err.message);
+      // Fallback: create a single llm_reason task
+      return {
+        title: userRequest.slice(0, 60),
+        subtasks: [{
+          id: "task-1",
+          title: "Answer user question",
+          tool: "llm_reason",
+          args: { prompt: userRequest },
+          depends_on: [],
+        }],
+      };
+    }
+  }
+
+  /**
+   * Build the decomposition prompt for LLM
+   */
+  _buildDecompositionPrompt() {
+    const toolList = Array.from(KNOWN_TOOLS).join(', ');
+    
+    return `You are a task decomposition expert. Given a user request, break it down into structured, executable subtasks.
+
+## Rules:
+1. Each subtask MUST use a concrete tool from the whitelist
+2. Each subtask MUST have a clear purpose
+3. Tools should be executed in logical order (use depends_on for dependencies)
+4. For tasks requiring reasoning/analysis, use "llm_reason" tool
+5. For file operations, use: file_read, file_write, file_edit, file_list, file_glob, file_grep
+6. For shell commands, use: shell_execute
+7. For web operations, use: web_fetch, web_search
+8. For code execution, use: python_execute
+9. For API calls, use: http_request
+
+## Available Tools:
+${toolList}
+
+## Output Format:
+Return a JSON object with this structure:
+{
+  "title": "Brief description of the overall task",
+  "subtasks": [
+    {
+      "id": "task-1",
+      "title": "What this step does",
+      "purpose": "Why this step is needed",
+      "tool": "tool_name",
+      "args": { /* tool-specific arguments */ },
+      "depends_on": [] // IDs of tasks that must complete first
+    }
+  ]
+}
+
+## Examples:
+
+User request: "Analyze the code in /Users/zhuxiaodong/Documents/GitRepo/MyAgent"
+Output:
+{
+  "title": "Analyze MyAgent codebase",
+  "subtasks": [
+    {
+      "id": "task-1",
+      "title": "List project structure",
+      "purpose": "Understand the overall project layout",
+      "tool": "file_list",
+      "args": { "path": "." },
+      "depends_on": []
+    },
+    {
+      "id": "task-2",
+      "title": "Read main server file",
+      "purpose": "Understand the server architecture",
+      "tool": "file_read",
+      "args": { "path": "backend/server.js" },
+      "depends_on": ["task-1"]
+    },
+    {
+      "id": "task-3",
+      "title": "Analyze dependencies",
+      "purpose": "Summarize the codebase analysis",
+      "tool": "llm_reason",
+      "args": { "prompt": "Analyze the MyAgent codebase based on the files read. Provide a summary of architecture, main components, and key features." },
+      "depends_on": ["task-1", "task-2"]
+    }
+  ]
+}
+
+IMPORTANT: Return ONLY the JSON object, no other text.`;
   }
 
 
@@ -149,97 +296,57 @@ export class TaskOrchestrator {
       });
     }
 
-    this.onProgress({ type: 'subtask_done', taskId: id, result });
-    return { id, title, result, status: success ? 'done' : 'error' };
+    this.onProgress({ type: 'subtask_done', taskId: id, result: result.slice(0, 500) });
+    return { id, title, result, status: success ? 'completed' : 'failed' };
   }
 
   /**
-   * Run all subtasks respecting dependencies.
-   * Each subtask is a direct tool call (no LLM-driven tool loop).
+   * Execute all subtasks in parallel (respecting dependencies)
    */
-  async executeAll(plan, context, onChunk) {
+  async executeAll(subtasks, context, onChunk) {
     const results = new Map();
-    const pending = new Map(plan.subtasks.map(t => [t.id, t]));
-    const running = new Set();
-
-    const isReady = (task) =>
-      (task.depends_on || []).every(dep => results.has(dep) && results.get(dep).status === 'done');
-
-    while (pending.size > 0 || running.size > 0) {
-      // Launch all ready tasks
-      for (const [id, task] of pending) {
-        if (isReady(task) && !running.has(id)) {
-          running.add(id);
-          pending.delete(id);
-
-          // Build context with dependency results
-          const depResults = (task.depends_on || [])
-            .map(dep => results.get(dep))
-            .filter(Boolean)
-            .map(r => `[${r.title}]\n${r.result}`)
-            .join('\n\n');
-
-          const taskContext = {
-            ...context,
-            history: depResults || null,
-          };
-
-          this.executeSubtask(task, taskContext, onChunk).then(result => {
-            results.set(id, result);
-            running.delete(id);
+    const completed = new Set();
+    
+    // Topological sort (simple version)
+    const executeTask = async (task) => {
+      // Wait for dependencies
+      for (const depId of task.depends_on) {
+        if (!completed.has(depId)) {
+          // Dependency not yet complete, wait
+          await new Promise((resolve) => {
+            const check = () => {
+              if (completed.has(depId)) {
+                resolve();
+              } else {
+                setTimeout(check, 100);
+              }
+            };
+            check();
           });
         }
       }
 
-      if (running.size > 0) {
-        await new Promise(r => setTimeout(r, 100));
-      } else if (pending.size > 0) {
-        // Stuck with pending but no running — dependency deadlock
-        for (const [id, task] of pending) {
-          results.set(id, { id, title: task.title, result: 'Skipped (dependency error)', status: 'skipped' });
-        }
-        break;
-      }
-    }
+      // Execute the task
+      const result = await this.executeSubtask(task, {
+        ...context,
+        history: Array.from(results.values()).map(r => `[${r.id}] ${r.result}`).join('\n\n'),
+      }, onChunk);
 
-    return Array.from(results.values());
-  }
+      results.set(task.id, result);
+      completed.add(task.id);
 
-  /**
-   * Synthesize final answer from all subtask results.
-   * If there's only one result, return it directly.
-   */
-  async synthesize(originalRequest, subtaskResults, context) {
-    if (subtaskResults.length === 1) {
-      return subtaskResults[0].result;
-    }
+      return result;
+    };
 
-    const resultsSummary = subtaskResults
-      .map(r => `## ${r.title}\n${r.result}`)
-      .join('\n\n---\n\n');
+    // Execute all tasks (respecting dependencies)
+    const tasks = subtasks.map(task => executeTask(task));
+    const allResults = await Promise.all(tasks);
 
-    const messages = [
-      { role: 'system', content: context.system },
-      {
-        role: 'user',
-        content: `Original request: "${originalRequest}"\n\nHere are the results from ${subtaskResults.length} subtasks:\n\n${resultsSummary}\n\nSynthesize these results into a clear, comprehensive final answer. Present it in a well-organized, readable format.`,
-      },
-    ];
-
-    let synthesis = '';
-    this.onProgress({ type: 'synthesis_start' });
-
-    for await (const chunk of this.llm.stream(messages, { temperature: 0.5 })) {
-      if (typeof chunk === 'string') {
-        synthesis += chunk;
-        this.onProgress({ type: 'synthesis_chunk', chunk });
-      } else if (chunk.type === 'text') {
-        synthesis += chunk.content;
-        this.onProgress({ type: 'synthesis_chunk', chunk: chunk.content });
-      }
-    }
-
-    this.onProgress({ type: 'synthesis_done' });
-    return synthesis;
+    return {
+      success: allResults.every(r => r.status === 'completed'),
+      results: allResults,
+    };
   }
 }
+
+export default TaskOrchestrator;
