@@ -1,8 +1,0 @@
-node_modules/
-*.log
-.env
-config.json
-*.pid
-.DS_Store
-dist/
-!frontend/dist/index.html
