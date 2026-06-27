@@ -172,10 +172,13 @@ view_logs() {
 case "${1:-start}" in
   start)
     start_daemon
-    # Keep script running to show logs (Ctrl+C to detach)
-    echo "📋 Showing daemon logs (Ctrl+C to detach)..."
+    # Wait for daemon to start
+    sleep 2
+    # Show status
+    show_status
     echo ""
-    tail -f "$SCRIPT_DIR/logs/agent-webui-daemon.log" 2>/dev/null || echo "Press Ctrl+C to exit"
+    echo "📋 To view logs: $0 logs"
+    echo "   Or: tail -f $SCRIPT_DIR/logs/agent-webui-daemon.log"
     ;;
   stop)
     stop_daemon

@@ -6,3 +6,4 @@ config.json
 .DS_Store
 dist/
 !frontend/dist/index.html
+.workbuddy/
