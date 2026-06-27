@@ -78,6 +78,10 @@
       font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
       color: var(--text3); margin-bottom: 10px;
     }
+    /* Ensure sidebar bottom content isn't hidden behind log panel */
+    #app.with-log-expanded #tab-identity .sidebar-section:last-child {
+      padding-bottom: 256px;
+    }
 
     /* Tab nav */
     .tab-nav { display: flex; gap: 4px; margin-bottom: 12px; }
@@ -640,6 +644,31 @@
     margin-bottom: 6px;
     font-weight: 500;
   }
+
+  /* ── Approval Dialog ───────────────────────── */
+  .approval-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  }
+  .approval-dialog {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    max-width: 420px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+  .approval-dialog h3 {
+    margin: 0 0 8px 0;
+    font-size: 15px;
+    color: var(--yellow);
+  }
   </style>
 </head>
 <body>
@@ -695,27 +724,24 @@
       <div class="sidebar-section">
         <h3>Identity Files</h3>
         <div class="identity-files" id="identity-files">
-          <div class="id-file">
+          <div class="id-file" onclick="loadIdentityFile('ID.md')" style="cursor:pointer">
             <div class="dot" id="dot-id"></div>
             <span class="label">ID.md — Identity</span>
           </div>
-          <div class="id-file">
+          <div class="id-file" onclick="loadIdentityFile('DNA.md')" style="cursor:pointer">
             <div class="dot" id="dot-dna"></div>
             <span class="label">DNA.md — Essence</span>
           </div>
-          <div class="id-file">
+          <div class="id-file" onclick="loadIdentityFile('Soul.md')" style="cursor:pointer">
             <div class="dot" id="dot-soul"></div>
             <span class="label">Soul.md — Spirit</span>
           </div>
         </div>
       </div>
       <div class="sidebar-section" style="flex:1">
-        <h3>Soul Update</h3>
-        <p style="font-size:11px;color:var(--text3);margin-bottom:8px">
-          Soul.md evolves with each session.
-        </p>
-        <textarea id="soul-input" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px;resize:vertical;outline:none;" placeholder="Update Soul.md content..."></textarea>
-        <button onclick="updateSoul()" class="btn-save" style="width:100%;margin-top:8px;font-size:12px">Save Soul</button>
+        <div style="font-size:11px;color:var(--accent2);margin-bottom:6px" id="identity-file-label">Select a file to edit</div>
+        <textarea id="identity-editor" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px;resize:vertical;outline:none;" placeholder="Click a file to load its content..."></textarea>
+        <button onclick="saveIdentityFile()" class="btn-save" style="width:100%;margin-top:8px;font-size:12px">Save</button>
       </div>
     </div>
 
@@ -796,6 +822,23 @@
               <button onclick="testFeishuConnection()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px">测试连接</button>
             </div>
           </div>
+        </div>
+        <hr style="border-color:var(--border)">
+        <div style="margin-bottom:12px">
+          <h3 style="font-size:13px;color:var(--text2);margin-bottom:8px">⚡ File Operations</h3>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button onclick="undoFileEdit()" id="undo-btn" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px" disabled>↩️ Undo</button>
+            <button onclick="redoFileEdit()" id="redo-btn" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px" disabled>↪️ Redo</button>
+          </div>
+          <div id="snapshot-status" style="font-size:10px;color:var(--text3)">No file edits yet</div>
+        </div>
+        <hr style="border-color:var(--border)">
+        <div style="margin-bottom:12px">
+          <h3 style="font-size:13px;color:var(--text2);margin-bottom:8px">📋 AGENTS.md</h3>
+          <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Project-specific rules for the agent. Loaded from AGENTS.md in workspace root.</p>
+          <div id="agents-md-status" style="font-size:11px;color:var(--text3);margin-bottom:8px">Checking...</div>
+          <button onclick="initAgentsMd()" id="init-agents-md-btn" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:12px">+ Create AGENTS.md</button>
+          <button onclick="reloadAgentsMd()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px;margin-top:6px">🔄 Reload AGENTS.md</button>
         </div>
         <hr style="border-color:var(--border)">
         <button onclick="clearHistory()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size:12px">
@@ -1157,6 +1200,15 @@ function handleMessage(msg) {
     appendLog(msg.success ? 'info' : 'warn', `🔧 工具返回: ${msg.success ? '成功' : '失败'}`);
   }
 
+  else if (type === 'chat_chunk') {
+    // Direct LLM stream output (no decomposition)
+    removeStatus();
+    if (!currentAssistantBubble) {
+      currentAssistantBubble = createAssistantBubble();
+    }
+    appendToAssistantBubble(msg.content);
+  }
+
   else if (type === 'synthesizing') {
     showStatus('✨ Synthesizing results...', 'synthesizing');
     currentAssistantBubble = createAssistantBubble();
@@ -1269,6 +1321,49 @@ function handleMessage(msg) {
   // ── History restore ─────────────────────────
   else if (type === 'history_restored') {
     showToast(`Restored ${msg.count} history messages`, 'success');
+  }
+
+  // ── Undo/Redo results ─────────────────────
+  else if (type === 'undo_result') {
+    if (msg.success) {
+      showToast(`Undo: ${msg.message}`, 'success');
+      document.getElementById('snapshot-status').textContent = `Last undo: ${msg.filePath}`;
+    } else {
+      showToast(`Undo failed: ${msg.message}`, 'error');
+    }
+    updateUndoRedoButtons();
+  }
+
+  else if (type === 'redo_result') {
+    if (msg.success) {
+      showToast(`Redo: ${msg.message}`, 'success');
+      document.getElementById('snapshot-status').textContent = `Last redo: ${msg.filePath}`;
+    } else {
+      showToast(`Redo failed: ${msg.message}`, 'error');
+    }
+    updateUndoRedoButtons();
+  }
+
+  // ── Approval request ─────────────────────
+  else if (type === 'approval_request') {
+    showApprovalDialog(msg.taskId, msg.reason, msg.tool, msg.args);
+  }
+
+  // ── AGENTS.md results ─────────────────────
+  else if (type === 'agents_md_init_result') {
+    if (msg.success) {
+      showToast(`Created AGENTS.md at ${msg.path}`, 'success');
+      document.getElementById('agents-md-status').textContent = 'AGENTS.md exists';
+      document.getElementById('init-agents-md-btn').textContent = 'AGENTS.md already exists';
+      document.getElementById('init-agents-md-btn').disabled = true;
+    } else {
+      showToast(`AGENTS.md init failed: ${msg.message}`, 'error');
+    }
+  }
+
+  else if (type === 'agents_md_reloaded') {
+    showToast(`AGENTS.md reloaded`, 'success');
+    document.getElementById('agents-md-status').textContent = msg.summary.exists ? `AGENTS.md loaded (${msg.summary.lines} lines)` : 'AGENTS.md not found';
   }
 }
 
@@ -1414,7 +1509,7 @@ function renderPlanCard(plan) {
   currentPlanCard.innerHTML = `
     <div class="plan-title">
       <span>${plan.title}</span>
-      <span class="badge">${plan.subtaskCount} subtasks</span>
+      <span class="badge">${plan.subtaskCount} subtask${plan.subtaskCount > 1 ? 's' : ''}</span>
     </div>
     <div class="subtasks-grid" id="subtasks-grid-${plan.title.replace(/\s/g,'_')}">
       ${plan.subtasks.map(t => `
@@ -1424,6 +1519,8 @@ function renderPlanCard(plan) {
             <span class="subtask-name">${t.title}</span>
             <span class="subtask-status pending">pending</span>
           </div>
+          ${t.purpose ? `<div class="subtask-purpose" style="font-size:10px;color:var(--text3);margin-top:4px;padding:0 2px">🎯 ${t.purpose}</div>` : ''}
+          ${t.command ? `<div class="subtask-command" style="font-size:9px;color:var(--accent2);margin-top:3px;padding:2px 4px;background:var(--bg4);border-radius:4px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.command}</div>` : ''}
           <div class="subtask-progress"><div class="subtask-progress-bar" id="stbar-${t.id}"></div></div>
         </div>
       `).join('')}
@@ -2000,6 +2097,65 @@ function clearHistory() {
   ws.send(JSON.stringify({ type: 'clear_history' }));
 }
 
+// ── Undo/Redo ──────────────────────────────────
+function undoFileEdit() {
+  if (!wsReady) return;
+  ws.send(JSON.stringify({ type: 'undo' }));
+}
+
+function redoFileEdit() {
+  if (!wsReady) return;
+  ws.send(JSON.stringify({ type: 'redo' }));
+}
+
+function updateUndoRedoButtons() {
+  // Enable/disable based on snapshot history
+  ws.send(JSON.stringify({ type: 'reload_snapshot_status' }));
+}
+
+// ── AGENTS.md ──────────────────────────────────
+function initAgentsMd() {
+  if (!wsReady) return;
+  ws.send(JSON.stringify({ type: 'init_agents_md' }));
+}
+
+function reloadAgentsMd() {
+  if (!wsReady) return;
+  ws.send(JSON.stringify({ type: 'reload_agents_md' }));
+}
+
+// ── Approval Dialog ──────────────────────────────
+let currentApprovalId = null;
+
+function showApprovalDialog(taskId, reason, tool, args) {
+  const overlay = document.createElement('div');
+  overlay.className = 'approval-overlay';
+  overlay.id = 'approval-dialog';
+  overlay.innerHTML = `
+    <div class="approval-dialog">
+      <h3>⚠️ 需要批准</h3>
+      <p style="font-size:12px;color:var(--text2);margin:8px 0">${reason}</p>
+      <div style="background:var(--bg3);padding:8px;border-radius:6px;font-size:11px;margin-bottom:12px">
+        <div><strong>工具:</strong> ${tool}</div>
+        <div><strong>参数:</strong> <code>${JSON.stringify(args).slice(0, 200)}</code></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="respondToApproval(true)" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--green);background:var(--green);color:#fff;cursor:pointer">✅ 批准</button>
+        <button onclick="respondToApproval(false)" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--red);background:var(--red);color:#fff;cursor:pointer">❌ 拒绝</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function respondToApproval(approved) {
+  const dialog = document.getElementById('approval-dialog');
+  if (dialog) dialog.remove();
+  if (!wsReady) return;
+  ws.send(JSON.stringify({ type: 'approval_response', id: currentApprovalId, approved }));
+  currentApprovalId = null;
+}
+
 function restartServer() {
   if (!confirm('重启服务器？这将断开所有客户端连接，但会零停机时间重启。')) return;
   showToast('正在重启服务器（零停机时间）...', 'info');
@@ -2339,6 +2495,8 @@ function reloadSkills() {
 }
 
 // ── Identity ─────────────────────────────────────────────────
+let currentIdentityFile = null;
+
 function loadIdentity() {
   fetch('/api/identity').then(r => r.json()).then(data => {
     document.getElementById('dot-id').className = `dot ${data.id?.loaded ? 'loaded' : ''}`;
@@ -2347,15 +2505,44 @@ function loadIdentity() {
   }).catch(() => {});
 }
 
-function updateSoul() {
-  const content = document.getElementById('soul-input').value.trim();
-  if (!content) { showToast('Soul content cannot be empty', 'error'); return; }
-  fetch('/api/identity/soul', {
+function loadIdentityFile(name) {
+  currentIdentityFile = name;
+  document.getElementById('identity-file-label').textContent = `Editing: ${name}`;
+  document.getElementById('identity-editor').value = 'Loading...';
+  document.getElementById('identity-editor').disabled = true;
+  fetch(`/api/identity/file?name=${name}`).then(r => {
+    if (!r.ok) throw new Error('Not found');
+    return r.json();
+  }).then(data => {
+    document.getElementById('identity-editor').value = data.content;
+    document.getElementById('identity-editor').disabled = false;
+  }).catch(() => {
+    document.getElementById('identity-editor').value = `// ${name} not yet created. Write something and save!`;
+    document.getElementById('identity-editor').disabled = false;
+  });
+}
+
+function saveIdentityFile() {
+  const content = document.getElementById('identity-editor').value.trim();
+  if (!currentIdentityFile) {
+    showToast('Click a file first to load it', 'error');
+    return;
+  }
+  if (!content) {
+    showToast('Content cannot be empty', 'error');
+    return;
+  }
+  fetch('/api/identity/file', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  }).then(() => showToast('Soul.md updated ✨', 'success'))
-    .catch(() => showToast('Failed to update Soul.md', 'error'));
+    body: JSON.stringify({ name: currentIdentityFile, content }),
+  }).then(r => {
+    if (!r.ok) throw new Error('Save failed');
+    return r.json();
+  }).then(() => {
+    showToast(`${currentIdentityFile} saved ✨`, 'success');
+    loadIdentity(); // refresh dots
+  }).catch(() => showToast('Failed to save', 'error'));
 }
 
 // ── Tab switching ─────────────────────────────────────────────

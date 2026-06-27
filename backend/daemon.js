@@ -112,11 +112,12 @@ async function zeroDowntimeRestart() {
     // 1. Start new server process
     log('Starting new server process...');
     newProcess = spawn('node', [CONFIG.serverJs], {
-      cwd: __dirname,
+      cwd: ROOT_DIR,
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
-      env: { ...process.env },
+      detached: true,
+      env: { ...process.env, no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
     });
+    newProcess.unref();
 
     // Pipe output to log file
     const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });
@@ -277,11 +278,12 @@ function startServer() {
   log(`Starting server: ${CONFIG.serverJs}`);
 
   serverProcess = spawn('node', [CONFIG.serverJs], {
-    cwd: __dirname,
+    cwd: ROOT_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: false,
-    env: { ...process.env },
+    detached: true,
+    env: { ...process.env, no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
   });
+  serverProcess.unref();
 
   // Pipe output to log file
   const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });

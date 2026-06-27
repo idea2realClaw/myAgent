@@ -21,6 +21,10 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+# Avoid proxy interference when connecting to localhost
+export no_proxy="${no_proxy:+$no_proxy,}localhost,127.0.0.1"
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}localhost,127.0.0.1"
+
 set -e
 echo "✅ Node.js found: $(command -v node)"
 

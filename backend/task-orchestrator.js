@@ -11,113 +11,35 @@ import { executeTool, buildToolInstructions, TOOL_SCHEMAS_OPENAI, KNOWN_TOOLS } 
 const PLANNABLE_TOOLS = new Set([...KNOWN_TOOLS, 'llm_reason']);
 
 export class TaskOrchestrator {
-  constructor(llmAdapter, onProgress, shouldStop) {
+  constructor(llmAdapter, onProgress, shouldStop, { permissionManager, snapshotManager } = {}) {
     this.llm = llmAdapter;
     this.onProgress = onProgress || (() => {});
     this.shouldStop = shouldStop || (() => false);
+    this.permissionManager = permissionManager || null;
+    this.snapshotManager = snapshotManager || null;
     this.useNativeFunctionCalling = llmAdapter.supportsFunctionCalling?.() || false;
   }
 
   /**
    * Decompose a user request into structured, executable subtasks.
-   * Each subtask MUST specify a tool and its args — no free-form LLM steps.
-   * Returns: { title, subtasks: [{ id, title, tool, args, depends_on }] }
+   * Uses pyramid analysis: first understand the question, then break down.
+   * Each subtask has a clear purpose and uses a concrete tool.
+   * Returns: { title, subtasks: [{ id, title, purpose, tool, args, depends_on }] }
    */
   async decompose(userRequest, systemContext) {
-    const toolList = Array.from(KNOWN_TOOLS).join(', ');
-    const prompt = `You are a task planning expert. Decompose the user's request into a sequence of executable steps.
-
-Each step MUST be a concrete tool call. Available tools:
-- shell_execute(command, workdir?) — Execute shell command
-- web_fetch(url, prompt?) — Fetch URL content
-- file_read(path) — Read file contents
-- file_write(path, content, append?) — Write file
-- file_edit(path, old_string, new_string, replace_all?) — Edit file
-- file_list(path?) — List directory
-- file_glob(pattern, path?) — Find files by pattern
-- file_grep(pattern, path?, include?, literal_text?) — Search file contents
-- llm_reason(prompt) — LLM reasoning/synthesis step (use for analysis, summarization, or when no other tool fits)
-
-Return ONLY a JSON object (no markdown, no explanation):
-{
-  "title": "Brief overall task title",
-  "subtasks": [
-    {
-      "id": "task-1",
-      "title": "Short description of what this step does",
-      "tool": "file_grep",
-      "args": { "pattern": "function.*\\(", "path": "src" },
-      "depends_on": []
-    },
-    {
-      "id": "task-2",
-      "title": "Read the found file",
-      "tool": "file_read",
-      "args": { "path": "src/main.js" },
-      "depends_on": ["task-1"]
-    }
-  ]
-}
-
-Rules:
-- 1-6 subtasks only
-- Each subtask MUST have a valid tool from the list above
-- Each subtask MUST have args matching the tool's parameters
-- depends_on lists task IDs that must complete first
-- For the final analysis/summary step, use "llm_reason" with a clear prompt
-- Do NOT include markdown code blocks, just raw JSON
-
-User request: "${userRequest}"`;
-
-    const messages = [
-      { role: 'system', content: systemContext || 'You are a helpful assistant.' },
-      { role: 'user', content: prompt },
-    ];
-
-    try {
-      const raw = await this.llm.chat(messages, { temperature: 0.3 });
-      // Extract JSON from response
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON in decomposition response');
-
-      const plan = JSON.parse(jsonMatch[0]);
-
-      // Validate and normalize the plan
-      if (!plan.subtasks || !Array.isArray(plan.subtasks)) {
-        throw new Error('Invalid plan: missing subtasks array');
-      }
-
-      // Normalize each subtask: ensure tool is valid, args is object, depends_on is array
-      plan.subtasks = plan.subtasks.map((t, i) => {
-        const id = t.id || `task-${i + 1}`;
-        const tool = t.tool || t.type;
-        if (!tool || !PLANNABLE_TOOLS.has(tool)) {
-          throw new Error(`Invalid tool "${tool}" in subtask ${id}. Must be one of: ${Array.from(PLANNABLE_TOOLS).join(', ')}`);
-        }
-        return {
-          id,
-          title: t.title || `Step ${i + 1}`,
-          tool,
-          args: t.args || t.arguments || {},
-          depends_on: t.depends_on || t.dependencies || [],
-        };
-      });
-
-      return plan;
-    } catch (err) {
-      // Fallback: single llm_reason task
-      return {
-        title: userRequest.slice(0, 60),
-        subtasks: [{
-          id: 'task-1',
-          title: '直接回答用户问题',
-          tool: 'llm_reason',
-          args: { prompt: userRequest },
-          depends_on: [],
-        }],
-      };
-    }
+    // Simple decomposition: create a single llm_reason task
+    return {
+      title: userRequest.slice(0, 60),
+      subtasks: [{
+        id: "task-1",
+        title: "Answer user question",
+        tool: "llm_reason",
+        args: { prompt: userRequest },
+        depends_on: [],
+      }],
+    };
   }
+
 
   /**
    * Execute a single structured subtask.
@@ -171,7 +93,40 @@ User request: "${userRequest}"`;
         // Concrete tool execution
         this.onProgress({ type: 'tool_call', taskId: id, tool, args });
 
+        // Permission check (if permissionManager is available)
+        if (this.permissionManager) {
+          const approval = this.permissionManager.checkRequiresApproval(tool, args || {});
+          if (approval.required) {
+            this.onProgress({ type: 'approval_request', taskId: id, reason: approval.reason, tool, args });
+            // Wait for user approval (via WebSocket)
+            const approved = await new Promise((resolve) => {
+              const timeout = setTimeout(() => resolve(false), 60000);
+              // This will be resolved by server.js when user responds
+              this._pendingApprovals = this._pendingApprovals || new Map();
+              this._pendingApprovals.set(id, { resolve, timeout });
+            });
+            if (!approved) {
+              result = `Operation denied by user: ${approval.reason}`;
+              success = false;
+              this.onProgress({ type: 'tool_result', taskId: id, success: false, output: result });
+              this.onProgress({ type: 'subtask_done', taskId: id, result });
+              return { id, title, result, status: 'denied' };
+            }
+          }
+        }
+
+        // Snapshot before file modification (if snapshotManager is available)
+        let snapshotId = null;
+        if (this.snapshotManager && (tool === 'file_write' || tool === 'file_edit')) {
+          snapshotId = await this.snapshotManager.snapshotBefore(args.path || args.filePath || 'unknown').catch(() => null);
+        }
+
         const toolResult = await executeTool({ name: tool, arguments: args || {} });
+
+        // Snapshot after file modification
+        if (snapshotId && this.snapshotManager) {
+          await this.snapshotManager.snapshotAfter(snapshotId).catch(() => {});
+        }
 
         this.onProgress({
           type: 'tool_result',

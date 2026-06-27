@@ -18,14 +18,16 @@ import { SkillLoader } from './skill-loader.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
 import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI } from './tool-executor.js';
+import { SnapshotManager } from './snapshot-manager.js';
+import { PermissionManager } from './permission-manager.js';
+import { AgentsMdLoader } from './agents-md-loader.js';
 import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus } from './channels/feishu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
-const IDENTITY_DIR = path.join(ROOT_DIR, 'identity');
+const IDENTITY_DIR = path.join(ROOT_DIR, '.workbuddy', 'memory');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
-const MODELS_FILE = path.join(ROOT_DIR, 'backend', 'models.json');
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');
 
 // Create required directories on startup
@@ -176,6 +178,14 @@ identity.load();
 const skillLoader = new SkillLoader(ROOT_DIR);
 skillLoader.load();
 
+const snapshotManager = new SnapshotManager();
+await snapshotManager.load();
+
+const permissionManager = new PermissionManager();
+
+const agentsMdLoader = new AgentsMdLoader();
+await agentsMdLoader.load();
+
 // ============================================================
 // WebSocket sessions
 // ============================================================
@@ -205,6 +215,10 @@ function buildSystemPrompt(provider = 'openai') {
   const useXML = provider === 'local';
   const skillsSnippet = skillLoader.toSystemPromptSnippet(useXML);
   if (skillsSnippet) parts.push(skillsSnippet);
+
+  // AGENTS.md project rules (injected if exists)
+  const agentsMdSnippet = agentsMdLoader.toSystemPromptSnippet();
+  if (agentsMdSnippet) parts.push(agentsMdSnippet);
 
   // Base instructions
   const useNativeFunctionCalling = ['openai', 'openrouter', 'qgenie', 'local'].includes(provider);
@@ -270,10 +284,6 @@ app.post('/api/config', (req, res) => {
   const updated = { ...existing, ...req.body };
   // Mask API key if '***'
   if (req.body.apiKey === '***') {
-    updated.apiKey = existing.apiKey;
-  }
-  // Prevent empty apiKey from overwriting existing key
-  if (!req.body.apiKey && existing.apiKey) {
     updated.apiKey = existing.apiKey;
   }
   saveConfig(updated);
@@ -379,6 +389,42 @@ app.post('/api/identity/soul', (req, res) => {
   res.json({ success: true });
 });
 
+// Get identity file content
+app.get('/api/identity/file', (req, res) => {
+  const { name } = req.query;
+  const validFiles = ['ID.md', 'DNA.md', 'Soul.md'];
+  if (!validFiles.includes(name)) {
+    return res.status(400).json({ error: `Invalid file name. Valid: ${validFiles.join(', ')}` });
+  }
+  const filePath = path.join(IDENTITY_DIR, name);
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    res.json({ name, content });
+  } catch {
+    res.status(404).json({ error: `${name} not found` });
+  }
+});
+
+// Save identity file content
+app.post('/api/identity/file', (req, res) => {
+  const { name, content } = req.body;
+  const validFiles = ['ID.md', 'DNA.md', 'Soul.md'];
+  if (!validFiles.includes(name)) {
+    return res.status(400).json({ error: `Invalid file name. Valid: ${validFiles.join(', ')}` });
+  }
+  if (content === undefined || content === null) {
+    return res.status(400).json({ error: 'content required' });
+  }
+  const filePath = path.join(IDENTITY_DIR, name);
+  fs.writeFileSync(filePath, content, 'utf8');
+  // Reload identity if it's the active identity file
+  if (identity.files[name]) {
+    identity.files[name.replace('.md', '').toLowerCase()] = null;
+  }
+  identity.load();
+  res.json({ success: true, name });
+});
+
 // ============================================================
 // File browser API
 // ============================================================
@@ -466,58 +512,12 @@ app.post('/api/channels/feishu/config', async (req, res) => {
 });
 
 // ============================================================
-// Log helper — sends log events to WebSocket client
-// ============================================================
-function sendLog(ws, level, message, data) {
-  const log = {
-    type: 'log',
-    level,
-    message,
-    timestamp: new Date().toISOString(),
-    data: data || null,
-  };
-  try { ws.send(JSON.stringify(log)); } catch { /* ignore */ }
-}
-
-// ============================================================
 // WebSocket handler
 // ============================================================
 
 wss.on('connection', (ws) => {
   const sessionId = uuidv4();
   sessions.set(sessionId, { ws, history: [], config: loadConfig() });
-
-  // ── 发送启动日志 ──────────────────────────────────────
-  const cfg = loadConfig();
-  sendLog(ws, 'info', '🟢 WebUI 已连接', { session: sessionId.slice(0, 8) });
-  sendLog(ws, 'info', '⚙️ 配置加载完成', { provider: cfg.provider, model: cfg.model });
-  sendLog(ws, 'info', `📦 技能已加载: ${skillLoader.getAll().length} 个`);
-
-  // 异步检查 LLM 连接
-  (async () => {
-    sendLog(ws, 'info', '🔌 开始测试 LLM 连接...', { provider: cfg.provider, url: cfg.baseURL || '默认' });
-    const status = await refreshStatus();
-    if (status.model === 'ok') {
-      sendLog(ws, 'info', `✅ LLM 连接测试通过`, { message: status.modelMessage });
-    } else {
-      sendLog(ws, 'error', `❌ LLM 连接测试失败`, { message: status.modelMessage });
-    }
-  })();
-
-  // 异步检查飞书连接
-  (async () => {
-    const fStatus = getFeishuStatus();
-    if (fStatus?.enabled) {
-      sendLog(ws, 'info', `🔌 飞书通道已启用`);
-      if (fStatus.hasCredentials) {
-        sendLog(ws, 'info', `✅ 飞书凭据已配置${fStatus.hasToken ? '，连接正常' : '，等待获取 Token'}`);
-      } else {
-        sendLog(ws, 'warn', `⚠️ 飞书已启用但凭据未完全配置`);
-      }
-    } else {
-      sendLog(ws, 'info', `⏸️ 飞书通道未启用（可在 Settings 中配置）`);
-    }
-  })();
 
   broadcast(ws, { type: 'session_init', sessionId });
 
@@ -535,36 +535,8 @@ wss.on('connection', (ws) => {
     if (msg.type === 'chat') {
       await handleChat(sessionId, session, msg);
     } else if (msg.type === 'config_update') {
-      const existing = loadConfig();
-      const merged = { ...existing, ...msg.config };
-      // Mask API key if '***' (same protection as HTTP POST)
-      if (msg.config && msg.config.apiKey === '***') {
-        merged.apiKey = existing.apiKey;
-      }
-      // Prevent empty apiKey from overwriting existing key
-      if (msg.config && !msg.config.apiKey && existing.apiKey) {
-        merged.apiKey = existing.apiKey;
-      }
-      session.config = merged;
-      saveConfig(merged);
-
-      // Auto-add model to models.json if not already present
-      try {
-        const model = merged.model;
-        const provider = merged.provider;
-        if (model && provider) {
-          const data = loadModels();
-          if (!data[provider]) data[provider] = [];
-          if (!data[provider].includes(model)) {
-            data[provider].push(model);
-            saveModels(data);
-            console.log(`[Models] Auto-added ${model} to ${provider} list`);
-          }
-        }
-      } catch (e) {
-        console.error('[Models] Failed to auto-add model:', e.message);
-      }
-
+      session.config = { ...session.config, ...msg.config };
+      saveConfig(session.config);
       broadcast(ws, { type: 'config_saved' });
     } else if (msg.type === 'clear_history') {
       session.history = [];
@@ -590,6 +562,35 @@ wss.on('connection', (ws) => {
     } else if (msg.type === 'exec_stream') {
       // Real-time streaming execution
       await handleExecStream(ws, session, msg);
+    } else if (msg.type === 'undo') {
+      // Undo last file edit
+      const result = await snapshotManager.undo();
+      broadcast(ws, { type: 'undo_result', ...result });
+      if (result.success) {
+        await snapshotManager.save();
+      }
+    } else if (msg.type === 'redo') {
+      // Redo last undone action
+      const result = await snapshotManager.redo();
+      broadcast(ws, { type: 'redo_result', ...result });
+      if (result.success) {
+        await snapshotManager.save();
+      }
+    } else if (msg.type === 'approval_response') {
+      // User responded to approval request
+      const { id, approved } = msg;
+      const handled = permissionManager.respondToApproval(id, approved);
+      if (!handled) {
+        broadcast(ws, { type: 'error', message: `Approval request ${id} not found` });
+      }
+    } else if (msg.type === 'init_agents_md') {
+      // Initialize AGENTS.md template
+      const result = await agentsMdLoader.init();
+      broadcast(ws, { type: 'agents_md_init_result', ...result });
+    } else if (msg.type === 'reload_agents_md') {
+      // Reload AGENTS.md from disk
+      await agentsMdLoader.load();
+      broadcast(ws, { type: 'agents_md_reloaded', summary: agentsMdLoader.getSummary() });
     }
   });
 
@@ -665,38 +666,55 @@ async function handleExecStream(ws, session, msg) {
 }
 
 // ============================================================
-// Simple command detection
+// Question Analysis — simple vs complex (LLM-based)
 // ============================================================
 
-function isSimpleCommand(input) {
-  const trimmed = input.trim();
+async function classifyQuestion(llm, userMessage) {
+  const trimmed = userMessage.trim();
 
-  // Common Chinese/English greetings and short phrases
-  const greetings = [
-    '你好', '您好', '早上好', '上午好', '下午好', '晚上好',
-    '好吗', '好不好', '怎么样', '如何',
-    '谢谢', '感谢', '多谢',
-    '再见', '拜拜', '拜拜了',
-    '是的', '对的', '没错', 'ok', 'OK', 'Ok',
-    '好的', '好', '行', '可以', '没问题',
-    'hi', 'Hi', 'hello', 'Hello', 'hey', 'Hey',
-    'thanks', 'Thank you', 'Bye', 'Goodbye',
+  // Action words that always trigger complex decomposition (even if short)
+  const actionWords = [
+    '搜索', '查找', '找', '查', '读', '写', '改', '删', '创建',
+    '执行', '运行', '安装', '下载', '上传',
+    '分析', '统计', '对比', '比较', '列出', '显示', '打开',
+    'search', 'find', 'read', 'write', 'edit', 'delete', 'create',
+    'run', 'exec', 'install', 'download', 'upload',
+    'analyze', 'list', 'grep', 'glob', 'fetch', 'curl',
   ];
+  for (const aw of actionWords) {
+    if (trimmed.includes(aw)) return 'complex';
+  }
 
-  // Check if input is a greeting (exact match or starts with greeting)
+  // 5 characters or less → simple (only if not an action word — already checked above)
+  if (trimmed.length <= 5) return 'simple';
+
+  // Obvious greetings → skip LLM call
+  const greetings = ['你好','您好','hi','hello','谢谢','thanks','再见','拜拜','好的','好','行','ok','OK'];
   for (const g of greetings) {
-    if (trimmed === g || (trimmed.startsWith(g) && trimmed.length <= g.length + 5)) {
-      return true;
-    }
+    if (trimmed === g || trimmed.startsWith(g)) return 'simple';
   }
 
-  // Check length (<10 Chinese characters)
-  const charCount = Array.from(trimmed).length;
-  if (charCount < 10) {
-    return true;
+  // Use LLM to classify: cheap single-token completion
+  try {
+    const messages = [
+      { role: 'system', content: 'You are a classifier. Respond with exactly one word: "simple" for a question that can be answered directly with general knowledge, greetings, opinions, or simple explanations. Respond "complex" if the question requires file operations, web research, code execution, searching, shell commands, multi-step analysis, or modifying files. Do NOT include any other text.' },
+      { role: 'user', content: trimmed },
+    ];
+    const result = await llm.chat(messages, { temperature: 0, maxTokens: 10 });
+    const classification = result.trim().toLowerCase();
+    if (classification.includes('complex')) return 'complex';
+    return 'simple';
+  } catch {
+    // Fallback: if LLM call fails, default to complex (safe choice)
+    return 'complex';
   }
+}
 
-  return false;
+function buildLLMMessages(system, history) {
+  return [
+    { role: 'system', content: system },
+    ...history.slice(-10),
+  ];
 }
 
 // ============================================================
@@ -755,143 +773,56 @@ async function handleChat(sessionId, session, msg) {
   // Add user message to history
   history.push({ role: 'user', content: userMessage });
 
-  sendLog(ws, 'info', `收到用户消息`, { content: userMessage.slice(0, 100) });
-
   const system = buildSystemPrompt(cfg.provider);
   const context = { system, history: history.slice(-10) };
 
-  const isSimple = isSimpleCommand(userMessage);
+  // ── Analyze question via LLM: simple (direct answer) or complex (decompose) ──
+  broadcast(ws, { type: 'thinking', message: '🧠 分析问题难度...' });
+  const questionType = await classifyQuestion(llm, userMessage);
+  const isSimple = (questionType === 'simple');
 
   if (isSimple) {
-    sendLog(ws, 'info', `简单指令，跳过任务分解`, { charCount: userMessage.trim().length });
-
-    // 直接调用 LLM，不用子任务 Panel
+    // Simple question → direct LLM answer, no decomposition
     broadcast(ws, { type: 'thinking', message: '思考中...' });
-
     try {
-      // 构造 API 请求信息并打印日志
-      const apiUrl = llmConfig.baseURL || (llmConfig.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1');
-      const apiModel = llmConfig.model || 'gpt-4o';
-      
-      // 构造完整的请求 messages
-      const requestMessages = [
-        { role: 'system', content: system },
-        ...history.slice(-10),
-      ];
-      
-      // 打印请求体（双向日志 - 请求）
-      sendLog(ws, 'info', `🤖 发送 LLM 请求`, {
-        provider: llmConfig.provider,
-        model: apiModel,
-        url: `${apiUrl}/chat/completions`,
-        messageCount: requestMessages.length,
-      });
-      
-      // 打印每条 message 的摘要（避免日志过长）
-      requestMessages.forEach((msg, idx) => {
-        const contentPreview = (msg.content || '').slice(0, 200).replace(/\n/g, ' ');
-        sendLog(ws, 'info', `  [请求] Message ${idx + 1}`, {
-          role: msg.role,
-          contentPreview: contentPreview + (msg.content && msg.content.length > 200 ? '...' : ''),
-        });
-      });
-      
-      // 直接创建 Assistant 气泡，流式输出
-      const currentBubble = true;
-      let fullResponse = '';
-
-      for await (const chunk of llm.stream(requestMessages)) {
-        if (chunk.type === 'text') {
-          fullResponse += chunk.content;
-          broadcast(ws, { type: 'synthesis_chunk', chunk: chunk.content });
-        } else if (chunk.type === 'tool_call') {
-          sendLog(ws, 'warn', `🔧 简单问题触发工具调用`, { tool: chunk.name, args: JSON.stringify(chunk.args).slice(0, 100) });
+      const llmMessages = buildLLMMessages(system, history);
+      let fullAnswer = '';
+      for await (const chunk of llm.stream(llmMessages, { temperature: 0.7 })) {
+        if (typeof chunk === 'string') {
+          fullAnswer += chunk;
+          broadcast(ws, { type: 'chat_chunk', content: chunk });
+        } else if (chunk.type === 'text') {
+          fullAnswer += chunk.content;
+          broadcast(ws, { type: 'chat_chunk', content: chunk.content });
         }
       }
-
-      sendLog(ws, 'info', `✅ LLM 返回成功`, { contentLength: fullResponse.length });
-
-      // 打印响应体（双向日志 - 响应）
-      const responsePreview = fullResponse.slice(0, 500).replace(/\n/g, ' ');
-      sendLog(ws, 'info', `  [响应] LLM 返回内容`, {
-        preview: responsePreview + (fullResponse.length > 500 ? '...' : ''),
-        fullLength: fullResponse.length,
+      // Filter identity leakage
+      fullAnswer = identity.filterOutput(fullAnswer);
+      // Add to history
+      history.push({ role: 'assistant', content: fullAnswer });
+      // Signal done — triggers Stop→Send button swap in frontend
+      broadcast(ws, {
+        type: 'done',
+        content: fullAnswer,
+        subtasks: [],
       });
-
-      // 过滤身份泄露
-      const filteredAnswer = identity.filterOutput(fullResponse);
-
-      // 添加到历史
-      history.push({ role: 'assistant', content: filteredAnswer });
-
-      broadcast(ws, { type: 'synthesis_done' });
-      broadcast(ws, { type: 'done', content: filteredAnswer, subtasks: [] });
-
     } catch (err) {
-      sendLog(ws, 'error', `❌ LLM API 请求失败`, { error: err.message });
-      broadcast(ws, { type: 'error', message: `LLM 请求失败: ${err.message}` });
+      broadcast(ws, { type: 'error', message: err.message });
     }
-
     return;
   }
 
-  // 复杂指令：执行任务分解
-  sendLog(ws, 'info', `复杂指令，开始任务分解`, { contentLength: userMessage.length });
-  broadcast(ws, { type: 'thinking', message: '分析中...' });
+  // Complex question → decompose into executable subtasks with pyramid analysis
+  broadcast(ws, { type: 'thinking', message: '🧠 正在分析问题并分解为可执行的子任务...' });
 
   const orchestrator = new TaskOrchestrator(llm, (event) => {
     broadcast(ws, event);
-  }, () => session.stopRequested);
+  }, () => session.stopRequested, { permissionManager, snapshotManager });
 
   try {
-    // Step 1: Decompose task
-    sendLog(ws, 'info', `开始任务分解`);
-    
-    // 计算 API URL
-    const decompApiUrl = llmConfig.baseURL || (llmConfig.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : llmConfig.provider === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1');
-    const decompApiModel = llmConfig.model || 'default';
-    
-    // 打印分解请求（双向日志 - 请求）
-    const decompMessages = [
-      { role: 'system', content: system },
-      { role: 'user', content: `请分解任务：${userMessage}` },
-    ];
-    sendLog(ws, 'info', `🤖 发送 LLM 分解请求`, {
-      provider: llmConfig.provider,
-      model: decompApiModel,
-      url: `${decompApiUrl}/chat/completions`,
-      task: userMessage.slice(0, 60),
-      messageCount: decompMessages.length,
-    });
-    
-    decompMessages.forEach((msg, idx) => {
-      const contentPreview = (msg.content || '').slice(0, 200).replace(/\n/g, ' ');
-      sendLog(ws, 'info', `  [分解请求] Message ${idx + 1}`, {
-        role: msg.role,
-        contentPreview: contentPreview + (msg.content && msg.content.length > 200 ? '...' : ''),
-      });
-    });
-    
+    // Step 1: Understand and decompose with pyramid analysis
     broadcast(ws, { type: 'decomposing' });
     const plan = await orchestrator.decompose(userMessage, system);
-    
-    // 打印分解响应（双向日志 - 响应）
-    sendLog(ws, 'info', `✅ 任务分解完成`, { title: plan.title, subtaskCount: plan.subtasks.length });
-    const planPreview = JSON.stringify(plan).slice(0, 500);
-    sendLog(ws, 'info', `  [分解响应] 分解计划`, {
-      planPreview: planPreview + (JSON.stringify(plan).length > 500 ? '...' : ''),
-    });
-
-    // 打印每个子任务的工具调用指令
-    sendLog(ws, 'info', `📋 分解计划:`);
-    plan.subtasks.forEach((t, i) => {
-      sendLog(ws, 'info', `  ${i + 1}. [${t.id}] ${t.title}`, {
-        tool: t.tool,
-        args: JSON.stringify(t.args).slice(0, 100),
-        depends_on: (t.depends_on || []).join(',') || '-',
-      });
-    });
-
     broadcast(ws, {
       type: 'plan',
       plan: {
@@ -900,41 +831,31 @@ async function handleChat(sessionId, session, msg) {
         subtasks: plan.subtasks.map(t => ({
           id: t.id,
           title: t.title,
-          tool: t.tool,
-          args: t.args,
-          depends_on: t.depends_on || [],
+          type: t.tool,
+          purpose: t.purpose || '',
           status: 'pending',
+          depends_on: t.depends_on || [],
+          command: `${t.tool}(${JSON.stringify(t.args).slice(0, 120)})`,
         })),
       },
     });
 
     // Step 2: Execute subtasks (parallel where possible)
-    sendLog(ws, 'info', `🚀 开始执行子任务`);
     const results = await orchestrator.executeAll(plan, context, (taskId, chunk) => {
       // chunk events already sent via onProgress
     });
-
-    // 打印每个子任务的执行结果摘要
-    results.forEach(r => {
-      const preview = (r.result || '').slice(0, 80).replace(/\n/g, ' ');
-      sendLog(ws, r.status === 'done' ? 'info' : 'warn', `  ${r.id} ${r.title} → ${r.status}`, { preview: preview + '...' });
-    });
-    sendLog(ws, 'info', `✅ 所有子任务执行完成`, { count: results.length });
 
     // Step 3: Synthesize if multiple subtasks
     let finalAnswer;
     if (results.length === 1) {
       finalAnswer = results[0].result;
     } else {
-      sendLog(ws, 'info', `开始综合多个子任务结果`, { count: results.length });
       broadcast(ws, { type: 'synthesizing' });
       finalAnswer = await orchestrator.synthesize(userMessage, results, context);
     }
 
     // Filter identity leakage
     finalAnswer = identity.filterOutput(finalAnswer);
-
-    sendLog(ws, 'info', `任务完成，返回给用户`, { contentLength: finalAnswer.length });
 
     // Add to history
     history.push({ role: 'assistant', content: finalAnswer });
@@ -950,63 +871,9 @@ async function handleChat(sessionId, session, msg) {
     });
 
   } catch (err) {
-    sendLog(ws, 'error', `聊天处理异常`, { error: err.message });
     broadcast(ws, { type: 'error', message: err.message });
   }
 }
-
-// ============================================================
-// Model List Management (models.json)
-// ============================================================
-
-function loadModels() {
-  if (fs.existsSync(MODELS_FILE)) {
-    try {
-      return JSON.parse(fs.readFileSync(MODELS_FILE, 'utf8'));
-    } catch { /* ignore */ }
-  }
-  // Default structure
-  return {
-    qgenie: ['default'],
-    local: ['default'],
-    openai: ['gpt-4o', 'gpt-4o-mini'],
-    anthropic: ['claude-opus-4-20250514', 'claude-sonnet-4-20250514'],
-    openrouter: ['nvidia/nemotron-3-super-120b-a12b:free'],
-  };
-}
-
-function saveModels(data) {
-  try {
-    fs.writeFileSync(MODELS_FILE, JSON.stringify(data, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[Models] Failed to save models.json:', e.message);
-  }
-}
-
-// Get models for a provider
-app.get('/api/models/:provider', (req, res) => {
-  const { provider } = req.params;
-  const data = loadModels();
-  const models = data[provider] || [];
-  res.json({ provider, models });
-});
-
-// Add a model to a provider's list
-app.post('/api/models/:provider', express.json(), (req, res) => {
-  const { provider } = req.params;
-  const { model } = req.body;
-  if (!model || !provider) {
-    return res.status(400).json({ error: 'Missing provider or model' });
-  }
-  const data = loadModels();
-  if (!data[provider]) data[provider] = [];
-  if (!data[provider].includes(model)) {
-    data[provider].push(model);
-    saveModels(data);
-    console.log(`[Models] Added ${model} to ${provider} list`);
-  }
-  res.json({ provider, models: data[provider] });
-});
 
 // ============================================================
 // SPA fallback
@@ -1113,7 +980,7 @@ setMessageProcessor(async (message, context) => {
   
   const orchestrator = new TaskOrchestrator(llm, (event) => {
     console.log('[Feishu] Orchestrator event:', event.type);
-  }, () => false);
+  }, () => false, { permissionManager, snapshotManager });
   
   try {
     const plan = await orchestrator.decompose(message, system);

@@ -311,6 +311,92 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// ── web_search — Search the web via DuckDuckGo ─────────────
+
+async function webSearch({ query, count = 5 }) {
+  if (!query) return { success: false, error: 'query is required' };
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+    });
+    const html = await resp.text();
+    // Parse results from DuckDuckGo HTML
+    const results = [];
+    const resultRegex = /<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const snippetRegex = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    let match;
+    let snippets = [];
+    while ((match = snippetRegex.exec(html)) !== null) {
+      snippets.push(match[1].replace(/<[^>]*>/g, ''));
+    }
+    let idx = 0;
+    while ((match = resultRegex.exec(html)) !== null && results.length < count) {
+      const title = match[2].replace(/<[^>]*>/g, '').trim();
+      const snippet = snippets[idx] || '';
+      idx++;
+      if (title && !title.includes('://')) {
+        results.push({ title, url: match[1], snippet });
+      }
+    }
+    return { success: true, query, results, count: results.length };
+  } catch (err) {
+    return { success: false, error: `web_search failed: ${err.message}` };
+  }
+}
+
+// ── python_execute — Execute Python code ─────────────────────
+
+async function pythonExecute({ code, args = '' }) {
+  if (!code) return { success: false, error: 'code is required' };
+  try {
+    const tmpFile = `/tmp/py_exec_${Date.now()}.py`;
+    require('fs').writeFileSync(tmpFile, code, 'utf8');
+    const { execSync } = require('child_process');
+    const result = execSync(`python3 ${tmpFile} ${args}`, {
+      timeout: 30000,
+      maxBuffer: 1024 * 1024,
+      encoding: 'utf8',
+    });
+    require('fs').unlinkSync(tmpFile);
+    return { success: true, stdout: result.trim() };
+  } catch (err) {
+    return { success: false, error: `python_execute failed: ${err.message}` };
+  }
+}
+
+// ── http_request — Make arbitrary HTTP requests ─────────────
+
+async function httpRequest({ url, method = 'GET', headers = {}, body = '' }) {
+  if (!url) return { success: false, error: 'url is required' };
+  try {
+    const fetchOptions = {
+      method,
+      headers: { 'User-Agent': 'Mozilla/5.0', ...headers },
+    };
+    if (body && method !== 'GET') {
+      fetchOptions.body = body;
+    }
+    const resp = await fetch(url, fetchOptions);
+    const contentType = resp.headers.get('content-type') || '';
+    let data;
+    if (contentType.includes('application/json')) {
+      data = await resp.json();
+    } else {
+      data = await resp.text();
+    }
+    return {
+      success: true,
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: Object.fromEntries(resp.headers.entries()),
+      data: typeof data === 'string' ? data.slice(0, 5000) : JSON.stringify(data).slice(0, 5000),
+    };
+  } catch (err) {
+    return { success: false, error: `http_request failed: ${err.message}` };
+  }
+}
+
 // ── Tool Schema (for LLM prompt) ────────────────────────────
 
 export const TOOL_SCHEMAS = {
@@ -381,6 +467,32 @@ export const TOOL_SCHEMAS = {
       literal_text: { type: 'boolean', description: 'Treat pattern as literal text, not regex', required: false },
     },
   },
+  web_search: {
+    name: 'web_search',
+    description: 'Search the web for information using DuckDuckGo. Use for current events, docs, research, or any online info.',
+    parameters: {
+      query: { type: 'string', description: 'Search query', required: true },
+      count: { type: 'number', description: 'Number of results (max 10, default 5)', required: false },
+    },
+  },
+  python_execute: {
+    name: 'python_execute',
+    description: 'Execute Python code and return stdout. Use for calculations, data analysis, or running Python scripts.',
+    parameters: {
+      code: { type: 'string', description: 'Python code to execute', required: true },
+      args: { type: 'string', description: 'Command-line arguments (passed to script)', required: false },
+    },
+  },
+  http_request: {
+    name: 'http_request',
+    description: 'Make an HTTP request to any URL. Use for calling REST APIs, fetching data, or submitting forms.',
+    parameters: {
+      url: { type: 'string', description: 'URL to request', required: true },
+      method: { type: 'string', description: 'HTTP method (GET/POST/PUT/DELETE, default GET)', required: false },
+      headers: { type: 'object', description: 'HTTP headers as key-value pairs', required: false },
+      body: { type: 'string', description: 'Request body (for POST/PUT)', required: false },
+    },
+  },
 };
 
 // ── OpenAI Native Function Calling Schema ────────────────────
@@ -413,6 +525,9 @@ export const TOOL_SCHEMAS_OPENAI = Object.entries(TOOL_SCHEMAS).map(([name, sche
 export const KNOWN_TOOLS = new Set([
   'shell_execute',
   'web_fetch',
+  'web_search',
+  'python_execute',
+  'http_request',
   'file_read',
   'file_write',
   'file_edit',
@@ -429,28 +544,70 @@ export async function executeTool(toolCall) {
   try {
     let result;
     switch (name) {
+      // ── Shell ──
       case 'shell_execute':
+      case 'bash':
+      case 'bash_exec':
+      case 'exec':
         result = await shellExecute(args);
         break;
+
+      // ── Web ──
       case 'web_fetch':
+      case 'fetch':
+      case 'fetch_url':
+      case 'http_get':
         result = await webFetch(args);
         break;
+      case 'web_search':
+      case 'search':
+      case 'search_web':
+        result = await webSearch(args);
+        break;
+      case 'http_request':
+      case 'api_call':
+      case 'rest_api':
+        result = await httpRequest(args);
+        break;
+
+      // ── Python ──
+      case 'python_execute':
+      case 'python':
+      case 'run_python':
+        result = await pythonExecute(args);
+        break;
+
+      // ── File operations ──
       case 'file_read':
+      case 'read_file':
+      case 'read':
         result = await fileRead(args);
         break;
       case 'file_write':
+      case 'write_file':
+      case 'write':
         result = await fileWrite(args);
         break;
       case 'file_edit':
+      case 'edit_file':
+      case 'replace_text':
         result = await fileEdit(args);
         break;
       case 'file_list':
+      case 'list_directory':
+      case 'list_dir':
+      case 'ls':
         result = await fileList(args);
         break;
       case 'file_glob':
+      case 'glob':
+      case 'find_files':
         result = await fileGlob(args);
         break;
       case 'file_grep':
+      case 'grep':
+      case 'search_files':
+      case 'search_in_files':
         result = await fileGrep(args);
         break;
       default:
@@ -515,6 +672,9 @@ export function buildToolInstructions(forNativeFunctionCalling = false) {
   lines.push('### Important Notes:');
   lines.push('- Always use \`shell_execute\` for Git operations, npm/yarn commands, or any CLI tool.');
   lines.push('- Use \`web_fetch\` to get current information from URLs (the LLM training data has a cutoff).');
+  lines.push('- Use \`web_search\` to search the web for current events, documentation, or research.');
+  lines.push('- Use \`python_execute\` for calculations, data analysis, or running Python code.');
+  lines.push('- Use \`http_request\` to call REST APIs or interact with web services.');
   lines.push('- Use \`file_read\` before editing files to understand their current content.');
   lines.push('- Keep tool call responses concise. Only call tools that are necessary.');
   lines.push('');
