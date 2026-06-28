@@ -22,11 +22,138 @@ export class TaskOrchestrator {
 
   /**
    * Decompose a user request into structured, executable subtasks.
-   * Uses pyramid analysis: first understand the question, then break down.
-   * Each subtask has a clear purpose and uses a concrete tool.
-   * Returns: { title, subtasks: [{ id, title, purpose, tool, args, depends_on }] }
+   * Uses OpenAI Function Calling for reliable structured output.
+   * Falls back to prompt-based approach if function calling not supported.
    */
   async decompose(userRequest, systemContext) {
+    // Try native function calling first (more reliable)
+    if (this.useNativeFunctionCalling && this.llm.chatWithTools) {
+      try {
+        console.log(`[TaskOrchestrator] Using native function calling for decomposition`);
+        const result = await this._decomposeWithFunctionCalling(userRequest, systemContext);
+        if (result && result.subtasks && result.subtasks.length > 0) {
+          console.log(`[TaskOrchestrator] Function calling decomposition successful, got ${result.subtasks.length} subtasks`);
+          return result;
+        }
+      } catch (err) {
+        console.error(`[TaskOrchestrator] Function calling failed: ${err.message}, falling back to prompt-based approach`);
+      }
+    }
+
+    // Fallback: prompt-based approach
+    console.log(`[TaskOrchestrator] Using prompt-based decomposition`);
+    return await this._decomposeWithPrompt(userRequest, systemContext);
+  }
+
+  /**
+   * Decompose using OpenAI Function Calling (native tool use)
+   * This is more reliable than parsing JSON from text
+   */
+  async _decomposeWithFunctionCalling(userRequest, systemContext) {
+    // Define the decomposition function for OpenAI
+    const decompositionFunction = {
+      name: 'decompose_task',
+      description: 'Decompose a user request into structured, executable subtasks',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Brief description of the overall task',
+          },
+          subtasks: {
+            type: 'array',
+            description: 'List of executable subtasks',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Unique task ID (e.g., task-1, task-2)' },
+                title: { type: 'string', description: 'What this step does' },
+                purpose: { type: 'string', description: 'Why this step is needed' },
+                tool: {
+                  type: 'string',
+                  description: 'Tool to use',
+                  enum: [...PLANABLE_TOOLS],
+                },
+                args: {
+                  type: 'object',
+                  description: 'Tool-specific arguments',
+                },
+                depends_on: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'IDs of tasks that must complete first',
+                },
+              },
+              required: ['id', 'title', 'tool', 'args'],
+            },
+          },
+        },
+        required: ['title', 'subtasks'],
+      },
+    };
+
+    const messages = [
+      {
+        role: 'system',
+        content: `You are a task decomposition expert. Break down user requests into executable subtasks.
+        
+Rules:
+1. Each subtask MUST use a concrete tool (not just llm_reason)
+2. For file operations, use: file_list, file_read, file_glob, file_grep
+3. For shell commands, use: shell_execute
+4. For web operations, use: web_search, web_fetch
+5. For code execution, use: python_execute
+6. Use depends_on for task dependencies
+7. Keep subtasks focused and executable`,
+      },
+      {
+        role: 'user',
+        content: `Decompose this request into executable subtasks: ${userRequest}\n\nContext: ${systemContext || 'General purpose'}`,
+      },
+    ];
+
+    try {
+      // Call LLM with function definition
+      const response = await this.llm.chatWithTools(messages, [decompositionFunction], {
+        temperature: 0.2,
+        maxTokens: 2000,
+      });
+
+      // Extract function call from response
+      if (response && response.tool_calls && response.tool_calls.length > 0) {
+        const toolCall = response.tool_calls[0];
+        if (toolCall.function.name === 'decompose_task') {
+          const args = JSON.parse(toolCall.function.arguments);
+          
+          // Validate and normalize
+          const validatedSubtasks = args.subtasks.map((subtask, index) => ({
+            id: subtask.id || `task-${index + 1}`,
+            title: subtask.title || `Step ${index + 1}`,
+            purpose: subtask.purpose || '',
+            tool: PLANABLE_TOOLS.has(subtask.tool) ? subtask.tool : 'llm_reason',
+            args: subtask.args || {},
+            depends_on: subtask.depends_on || [],
+          }));
+
+          return {
+            title: args.title || userRequest.slice(0, 60),
+            subtasks: validatedSubtasks,
+          };
+        }
+      }
+
+      throw new Error('No valid function call in response');
+    } catch (err) {
+      console.error(`[TaskOrchestrator] Function calling error: ${err.message}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Decompose using prompt-based approach (fallback)
+   */
+  async _decomposeWithPrompt(userRequest, systemContext) {
     // 尝试最多 2 次分解（如果第一次 JSON 解析失败，重试）
     for (let attempt = 1; attempt <= 2; attempt++) {
       const messages = [

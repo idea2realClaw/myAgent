@@ -352,6 +352,78 @@ export class LLMAdapter {
   }
 
   /**
+   * Chat with tools (function calling)
+   * Returns the full response with tool_calls for structured output
+   * Used by TaskOrchestrator for reliable task decomposition
+   */
+  async chatWithTools(messages, tools, options = {}) {
+    const { provider } = this.config;
+
+    if (provider === 'openai' || provider === 'openrouter' || provider === 'qgenie' || provider === 'local') {
+      return this._openaiChatWithTools(messages, tools, options);
+    } else if (provider === 'anthropic') {
+      // Anthropic doesn't support function calling in the same way
+      // Fall back to regular chat and parse JSON from response
+      const response = await this._anthropicChat(messages, { ...options, tools });
+      return { content: response, tool_calls: [] };
+    } else {
+      throw new Error(`chatWithTools not supported for provider: ${provider}`);
+    }
+  }
+
+  async _openaiChatWithTools(messages, tools, options = {}) {
+    const { OpenAI } = await import('openai');
+    const { apiKey, model, baseURL } = this.config;
+
+    const clientConfig = { apiKey };
+    if (baseURL) clientConfig.baseURL = baseURL;
+
+    const client = new OpenAI(clientConfig);
+
+    // Convert tools to OpenAI format
+    const openaiTools = tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name || tool.function?.name,
+        description: tool.description || '',
+        parameters: tool.parameters || tool.function?.parameters,
+      },
+    }));
+
+    const response = await client.chat.completions.create({
+      model: model || 'gpt-4o',
+      messages,
+      tools: openaiTools,
+      tool_choice: 'auto',
+      temperature: options.temperature ?? 0.2,
+      max_tokens: options.maxTokens || 2000,
+      ...options.extra,
+    });
+
+    const message = response.choices[0].message;
+
+    // Return structured response
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      return {
+        content: message.content || '',
+        tool_calls: message.tool_calls.map(tc => ({
+          id: tc.id,
+          type: tc.type,
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          },
+        })),
+      };
+    }
+
+    return {
+      content: message.content || '',
+      tool_calls: [],
+    };
+  }
+
+  /**
    * Get available models for this provider
    */
   async listModels() {
