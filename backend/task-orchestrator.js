@@ -27,164 +27,233 @@ export class TaskOrchestrator {
    * Returns: { title, subtasks: [{ id, title, purpose, tool, args, depends_on }] }
    */
   async decompose(userRequest, systemContext) {
-    // Use LLM to decompose the task
-    const messages = [
-      { role: 'system', content: this._buildDecompositionPrompt() },
-      { role: 'user', content: `User request: ${userRequest}\n\nProject context: ${systemContext || 'General purpose'}` },
-    ];
+    // 尝试最多 2 次分解（如果第一次 JSON 解析失败，重试）
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const messages = [
+        { role: 'system', content: this._buildDecompositionPrompt() },
+        { role: 'user', content: `用户请求: ${userRequest}\n\n项目上下文: ${systemContext || '通用'}` },
+      ];
 
-    try {
-      const llmResponse = await this.llm.chat(messages, {
-        temperature: 0.3,
-        maxTokens: 2000,
-        tools: this.useNativeFunctionCalling ? TOOL_SCHEMAS_OPENAI : undefined,
-      });
-
-      // Try to parse the response as JSON
-      let decomposition;
       try {
-        // Extract JSON from response (might be wrapped in markdown)
-        const jsonMatch = llmResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || llmResponse.match(/(\{[\s\S]*\})/);
-        const jsonStr = jsonMatch ? jsonMatch[1] : llmResponse;
-        decomposition = JSON.parse(jsonStr);
-      } catch (parseErr) {
-        console.error('[TaskOrchestrator] Failed to parse decomposition:', parseErr.message);
-        // Fallback: create a single llm_reason task
-        return {
-          title: userRequest.slice(0, 60),
-          subtasks: [{
-            id: "task-1",
-            title: "Answer user question",
-            tool: "llm_reason",
-            args: { prompt: userRequest },
-            depends_on: [],
-          }],
-        };
-      }
+        const llmResponse = await this.llm.chat(messages, {
+          temperature: 0.2,  // 降低温度，提高 JSON 输出稳定性
+          maxTokens: 2000,
+        });
 
-      // Validate decomposition structure
-      if (!decomposition.subtasks || !Array.isArray(decomposition.subtasks)) {
-        throw new Error('Invalid decomposition: missing subtasks array');
-      }
+        // 详细记录 LLM 原始回复（用于调试）
+        console.log(`[TaskOrchestrator] decompose() attempt ${attempt}, LLM response length: ${llmResponse?.length || 0}`);
+        console.log(`[TaskOrchestrator] LLM raw response (first 500 chars): ${JSON.stringify(llmResponse?.slice(0, 500))}`);
 
-      // Validate and normalize each subtask
-      const validatedSubtasks = [];
-      for (const [index, subtask] of decomposition.subtasks.entries()) {
-        if (!subtask.tool) {
-          console.warn(`[TaskOrchestrator] Subtask ${index} missing tool, skipping`);
+        // 健壮的 JSON 提取
+        let decomposition;
+        try {
+          let jsonStr = llmResponse.trim();
+
+          // 方法1：直接解析（如果 LLM 返回了纯 JSON）
+          try {
+            decomposition = JSON.parse(jsonStr);
+          } catch {
+            // 方法2：提取 ```json ... ``` 或 ``` ... ``` 包裹的内容
+            const markdownMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            if (markdownMatch) {
+              decomposition = JSON.parse(markdownMatch[1].trim());
+            } else {
+              // 方法3：提取第一个 { 到最后一个 }
+              const jsonStart = jsonStr.indexOf('{');
+              const jsonEnd = jsonStr.lastIndexOf('}') + 1;
+              if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                const extracted = jsonStr.slice(jsonStart, jsonEnd);
+                console.log(`[TaskOrchestrator] Extracted JSON (chars ${jsonStart}-${jsonEnd}): ${extracted.slice(0, 200)}...`);
+                decomposition = JSON.parse(extracted);
+              } else {
+                throw new Error('No JSON object found in response');
+              }
+            }
+          }
+
+          // 验证结构
+          if (!decomposition.subtasks || !Array.isArray(decomposition.subtasks)) {
+            throw new Error('Invalid structure: missing subtasks array');
+          }
+
+          // 验证通过，跳出重试循环
+          console.log(`[TaskOrchestrator] Decomposition successful on attempt ${attempt}, got ${decomposition.subtasks.length} subtasks`);
+          break;
+
+        } catch (parseErr) {
+          console.error(`[TaskOrchestrator] JSON parse failed (attempt ${attempt}): ${parseErr.message}`);
+          if (attempt === 2) {
+            // 两次都失败，使用 fallback
+            console.warn('[TaskOrchestrator] Both attempts failed, using fallback');
+            return this._createFallbackDecomposition(userRequest);
+          }
+          // 否则继续重试
           continue;
         }
-
-        // Validate tool exists
-        if (!PLANABLE_TOOLS.has(subtask.tool)) {
-          console.warn(`[TaskOrchestrator] Unknown tool: ${subtask.tool}, converting to llm_reason`);
-          subtask.tool = 'llm_reason';
+      } catch (err) {
+        console.error(`[TaskOrchestrator] LLM call failed (attempt ${attempt}): ${err.message}`);
+        if (attempt === 2) {
+          return this._createFallbackDecomposition(userRequest);
         }
+      }
+    }
 
-        // Ensure required fields
-        validatedSubtasks.push({
-          id: subtask.id || `task-${index + 1}`,
-          title: subtask.title || `Step ${index + 1}`,
-          purpose: subtask.purpose || '',
-          tool: subtask.tool,
-          args: subtask.args || {},
-          depends_on: subtask.depends_on || [],
-        });
+    // 验证并规范化每个子任务
+    const validatedSubtasks = [];
+    for (const [index, subtask] of decomposition.subtasks.entries()) {
+      if (!subtask.tool) {
+        console.warn(`[TaskOrchestrator] Subtask ${index} missing tool, skipping`);
+        continue;
       }
 
-      return {
-        title: decomposition.title || userRequest.slice(0, 60),
-        subtasks: validatedSubtasks,
-      };
-    } catch (err) {
-      console.error('[TaskOrchestrator] Decomposition failed:', err.message);
-      // Fallback: create a single llm_reason task
+      // 验证工具是否存在
+      if (!PLANABLE_TOOLS.has(subtask.tool)) {
+        console.warn(`[TaskOrchestrator] Unknown tool: ${subtask.tool}, converting to llm_reason`);
+        subtask.tool = 'llm_reason';
+      }
+
+      // 确保必需字段存在
+      validatedSubtasks.push({
+        id: subtask.id || `task-${index + 1}`,
+        title: subtask.title || `Step ${index + 1}`,
+        purpose: subtask.purpose || '',
+        tool: subtask.tool,
+        args: subtask.args || {},
+        depends_on: subtask.depends_on || [],
+      });
+    }
+
+    // 如果验证后没有子任务，使用 fallback
+    if (validatedSubtasks.length === 0) {
+      console.warn('[TaskOrchestrator] No valid subtasks after validation, using fallback');
+      return this._createFallbackDecomposition(userRequest);
+    }
+
+    return {
+      title: decomposition.title || userRequest.slice(0, 60),
+      subtasks: validatedSubtasks,
+    };
+  }
+
+  /**
+   * 创建 fallback 分解（当 LLM 分解失败时使用）
+   */
+  _createFallbackDecomposition(userRequest) {
+    // 尝试根据请求内容智能选择工具
+    const request = userRequest.toLowerCase();
+
+    // 如果请求涉及文件/代码分析，使用文件工具
+    if (request.includes('代码') || request.includes('code') || request.includes('文件') || request.includes('file')) {
       return {
         title: userRequest.slice(0, 60),
-        subtasks: [{
-          id: "task-1",
-          title: "Answer user question",
-          tool: "llm_reason",
-          args: { prompt: userRequest },
-          depends_on: [],
-        }],
+        subtasks: [
+          {
+            id: 'task-1',
+            title: '列出项目文件',
+            purpose: '了解项目结构',
+            tool: 'file_list',
+            args: { path: '.' },
+            depends_on: [],
+          },
+          {
+            id: 'task-2',
+            title: '分析内容',
+            purpose: '基于文件列表回答问题',
+            tool: 'llm_reason',
+            args: { prompt: `用户请求: ${userRequest}\n\n请基于前面列出的文件结构，回答用户的问题。` },
+            depends_on: ['task-1'],
+          },
+        ],
       };
     }
+
+    // 如果请求涉及搜索
+    if (request.includes('搜索') || request.includes('search') || request.includes('查找') || request.includes('find')) {
+      return {
+        title: userRequest.slice(0, 60),
+        subtasks: [
+          {
+            id: 'task-1',
+            title: '搜索信息',
+            purpose: '获取相关信息',
+            tool: 'web_search',
+            args: { query: userRequest, count: 5 },
+            depends_on: [],
+          },
+          {
+            id: 'task-2',
+            title: '总结结果',
+            purpose: '整理搜索结果',
+            tool: 'llm_reason',
+            args: { prompt: `基于搜索结果，回答: ${userRequest}` },
+            depends_on: ['task-1'],
+          },
+        ],
+      };
+    }
+
+    // 默认：单个 llm_reason
+    return {
+      title: userRequest.slice(0, 60),
+      subtasks: [{
+        id: 'task-1',
+        title: '回答用户问题',
+        tool: 'llm_reason',
+        args: { prompt: userRequest },
+        depends_on: [],
+      }],
+    };
   }
 
   /**
    * Build the decomposition prompt for LLM
+   * 强化版：确保 LLM 返回纯 JSON
    */
   _buildDecompositionPrompt() {
     const toolList = Array.from(KNOWN_TOOLS).join(', ');
-    
-    return `You are a task decomposition expert. Given a user request, break it down into structured, executable subtasks.
 
-## Rules:
-1. Each subtask MUST use a concrete tool from the whitelist
-2. Each subtask MUST have a clear purpose
-3. Tools should be executed in logical order (use depends_on for dependencies)
-4. For tasks requiring reasoning/analysis, use "llm_reason" tool
-5. For file operations, use: file_read, file_write, file_edit, file_list, file_glob, file_grep
-6. For shell commands, use: shell_execute
-7. For web operations, use: web_fetch, web_search
-8. For code execution, use: python_execute
-9. For API calls, use: http_request
+    return `你是一个任务分解专家。你的任务是把用户的请求分解成多个可执行的子任务。
+每个子任务必须调用一个具体的工具（不能用 llm_reason 代替所有步骤）。
 
-## Available Tools:
+## 可用工具列表：
 ${toolList}
 
-## Output Format:
-Return a JSON object with this structure:
-{
-  "title": "Brief description of the overall task",
-  "subtasks": [
-    {
-      "id": "task-1",
-      "title": "What this step does",
-      "purpose": "Why this step is needed",
-      "tool": "tool_name",
-      "args": { /* tool-specific arguments */ },
-      "depends_on": [] // IDs of tasks that must complete first
-    }
-  ]
-}
+## 各工具的参数说明：
+- file_list: { "path": "目录路径" } — 列出目录内容
+- file_read: { "path": "文件路径" } — 读取文件内容
+- file_glob: { "pattern": "*.js", "path": "." } — 搜索文件
+- file_grep: { "pattern": "关键字", "path": "." } — 搜索文件内容
+- shell_execute: { "command": "ls -la" } — 执行 shell 命令
+- web_search: { "query": "搜索词", "count": 5 } — 搜索网络
+- web_fetch: { "url": "https://..." } — 获取网页内容
+- python_execute: { "code": "print('hello')" } — 执行 Python
+- http_request: { "url": "...", "method": "GET" } — HTTP 请求
+- llm_reason: { "prompt": "分析问题..." } — LLM 推理（仅用于需要综合分析的步骤）
 
-## Examples:
+## 输出格式（必须严格遵守）：
+你必须只返回一个纯 JSON 对象，不要有任何其他文字、解释、或 markdown 包裹。
 
-User request: "Analyze the code in /Users/zhuxiaodong/Documents/GitRepo/MyAgent"
-Output:
-{
-  "title": "Analyze MyAgent codebase",
-  "subtasks": [
-    {
-      "id": "task-1",
-      "title": "List project structure",
-      "purpose": "Understand the overall project layout",
-      "tool": "file_list",
-      "args": { "path": "." },
-      "depends_on": []
-    },
-    {
-      "id": "task-2",
-      "title": "Read main server file",
-      "purpose": "Understand the server architecture",
-      "tool": "file_read",
-      "args": { "path": "backend/server.js" },
-      "depends_on": ["task-1"]
-    },
-    {
-      "id": "task-3",
-      "title": "Analyze dependencies",
-      "purpose": "Summarize the codebase analysis",
-      "tool": "llm_reason",
-      "args": { "prompt": "Analyze the MyAgent codebase based on the files read. Provide a summary of architecture, main components, and key features." },
-      "depends_on": ["task-1", "task-2"]
-    }
-  ]
-}
+JSON 格式：
+{"title":"任务标题","subtasks":[{"id":"task-1","title":"步骤描述","purpose":"目的","tool":"工具名","args":{工具参数},"depends_on":[]}]}
 
-IMPORTANT: Return ONLY the JSON object, no other text.`;
+## 示例 1：
+用户输入：分析代码 /Users/zhuxiaodong/Documents/GitRepo/MyAgent
+你的输出：
+{"title":"分析 MyAgent 代码","subtasks":[{"id":"task-1","title":"列出项目文件结构","purpose":"了解项目整体结构","tool":"file_list","args":{"path":"."},"depends_on":[]},{"id":"task-2","title":"读取 server.js","purpose":"了解服务器实现","tool":"file_read","args":{"path":"backend/server.js"},"depends_on":["task-1"]},{"id":"task-3","title":"总结分析结果","purpose":"综合分析代码结构和功能","tool":"llm_reason","args":{"prompt":"基于前面读取的文件，分析 MyAgent 的代码结构、主要功能和技术栈"},"depends_on":["task-1","task-2"]}]}
+
+## 示例 2：
+用户输入：搜索 MyAgent 的相关信息
+你的输出：
+{"title":"搜索 MyAgent 信息","subtasks":[{"id":"task-1","title":"搜索 MyAgent","purpose":"获取 MyAgent 的相关资料","tool":"web_search","args":{"query":"MyAgent","count":5},"depends_on":[]},{"id":"task-2","title":"总结搜索结果","purpose":"整理搜索到的信息","tool":"llm_reason","args":{"prompt":"根据搜索结果，总结 MyAgent 的关键信息"},"depends_on":["task-1"]}]}
+
+## 关键要求：
+1. 必须返回纯 JSON，不要用 \`\`\`json 包裹
+2. 每个子任务都必须有具体的 tool，不能全是 llm_reason
+3. 对于文件操作，必须用 file_list/file_read 等工具，不能只用 llm_reason
+4. 子任务数量：简单任务 2-3 个，复杂任务 3-5 个
+5. 使用 depends_on 表示依赖关系（前面的任务 ID）
+
+现在，请分解用户的请求。`;
   }
 
 
