@@ -53,15 +53,20 @@ fi
 # ── Path helper ─────────────────────────────────────────────
 # Cross-platform SCRIPT_DIR: always get a usable absolute path
 if [ "$__OS" = "windows" ]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"
-  # Convert forward slashes for Windows
-  SCRIPT_DIR="${SCRIPT_DIR//\//\\}"
+  # Convert Unix-style path (Git Bash) to Windows-style for Node.js
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SCRIPT_DIR_WIN="$(cygpath -w "$SCRIPT_DIR" 2>/dev/null || echo "$SCRIPT_DIR")"
+  # If cygpath failed, do manual conversion
+  if [ "$SCRIPT_DIR_WIN" = "$SCRIPT_DIR" ]; then
+    SCRIPT_DIR_WIN="$(echo "$SCRIPT_DIR" | sed 's|^/\([a-zA-Z]\)/|\1:/|' | sed 's|/|\\\\|g')"
+  fi
+  BACKEND_DIR="$SCRIPT_DIR_WIN/backend"
+  DAEMON_JS="$BACKEND_DIR/daemon.js"
 else
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  BACKEND_DIR="$SCRIPT_DIR/backend"
+  DAEMON_JS="$BACKEND_DIR/daemon.js"
 fi
-
-BACKEND_DIR="$SCRIPT_DIR/backend"
-DAEMON_JS="$BACKEND_DIR/daemon.js"
 CONTROL_PORT=13737
 
 # ── Proxy avoidance ─────────────────────────────────────────
@@ -91,21 +96,36 @@ check_process() {
   if [ -z "$pid" ] || ! [ "$pid" -gt 0 ] 2>/dev/null; then
     return 1
   fi
-  kill -0 "$pid" 2>/dev/null
+  if [ "$__OS" = "windows" ]; then
+    # Windows: use tasklist.exe
+    tasklist.exe /FI "PID eq $pid" 2>/dev/null | grep -q "$pid"
+  else
+    # Mac/Linux: use kill -0
+    kill -0 "$pid" 2>/dev/null
+  fi
 }
 
 # ── Cross-platform kill ────────────────────────────────────
 kill_process() {
   local pid="$1"
-  if check_process "$pid"; then
+  if ! check_process "$pid"; then
+    return 0   # already not running
+  fi
+  if [ "$__OS" = "windows" ]; then
+    taskkill.exe /F /PID "$pid" 2>/dev/null || true
+  else
     kill "$pid" 2>/dev/null || true
     sleep 2
     if check_process "$pid"; then
       kill -9 "$pid" 2>/dev/null || true
     fi
-    return 0
   fi
-  return 1
+  # Wait briefly and confirm
+  sleep 1
+  if check_process "$pid"; then
+    echo "   ⚠️  Process $pid may still be running"
+  fi
+  return 0
 }
 
 # ── Check if daemon is running ────────────────────────────
@@ -178,9 +198,9 @@ start_daemon() {
   fi
 
   local daemon_pid=$!
-  echo "   Launched (PID: $daemon_pid), waiting for ready..."
+  echo "   Launched (launcher PID: $daemon_pid), waiting for daemon to be ready..."
 
-  # Wait for PID file (up to 10 seconds)
+  # Wait for PID file (retry every 1s, up to 10s)
   local waited=0
   while [ $waited -lt 10 ]; do
     if [ -f "$SCRIPT_DIR/.agent-webui-daemon.pid" ]; then
@@ -198,11 +218,13 @@ start_daemon() {
     fi
     sleep 1
     waited=$((waited + 1))
-    echo "   Waiting... ($waited s)"
   done
 
-  echo "❌ Failed to start daemon — check logs:"
-  echo "   $SCRIPT_DIR/logs/daemon-stdout.log"
+  # If we get here, failed to start - show log tail
+  echo "❌ Daemon may have failed — last 20 lines of log:"
+  tail -20 "$SCRIPT_DIR/logs/daemon-stdout.log" 2>/dev/null || true
+  echo ""
+  echo "   Full log: $SCRIPT_DIR/logs/daemon-stdout.log"
   exit 1
 }
 
