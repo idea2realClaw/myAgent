@@ -302,15 +302,25 @@ IMPORTANT: Return ONLY the JSON object, no other text.`;
 
   /**
    * Execute all subtasks in parallel (respecting dependencies)
+   * Accepts either a decomposition object { title, subtasks } or a subtasks array
    */
-  async executeAll(subtasks, context, onChunk) {
+  async executeAll(decomposition, context, onChunk) {
+    // Handle both formats: decomposition object or raw subtasks array
+    const subtasks = Array.isArray(decomposition) 
+      ? decomposition 
+      : (decomposition?.subtasks || []);
+    
+    if (!Array.isArray(subtasks) || subtasks.length === 0) {
+      throw new Error('executeAll: No subtasks to execute');
+    }
+    
     const results = new Map();
     const completed = new Set();
     
     // Topological sort (simple version)
     const executeTask = async (task) => {
       // Wait for dependencies
-      for (const depId of task.depends_on) {
+      for (const depId of task.depends_on || []) {
         if (!completed.has(depId)) {
           // Dependency not yet complete, wait
           await new Promise((resolve) => {
@@ -325,23 +335,23 @@ IMPORTANT: Return ONLY the JSON object, no other text.`;
           });
         }
       }
-
+      
       // Execute the task
       const result = await this.executeSubtask(task, {
         ...context,
         history: Array.from(results.values()).map(r => `[${r.id}] ${r.result}`).join('\n\n'),
       }, onChunk);
-
+      
       results.set(task.id, result);
       completed.add(task.id);
-
+      
       return result;
     };
-
+    
     // Execute all tasks (respecting dependencies)
     const tasks = subtasks.map(task => executeTask(task));
     const allResults = await Promise.all(tasks);
-
+    
     return {
       success: allResults.every(r => r.status === 'completed'),
       results: allResults,

@@ -1013,7 +1013,7 @@ server.listen(PORT, () => {
 
   // ── Heartbeat Logger ─────────────────────────────────────
   // Log heartbeat every 60 seconds to show server is alive
-  const HEARTBEAT_INTERVAL = 60 * 1000; // 60 seconds
+  const HEARTBEAT_INTERVAL = 15 * 1000; // 15 seconds
   const startTime = Date.now();
 
   const heartbeatTimer = setInterval(() => {

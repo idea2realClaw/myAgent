@@ -405,7 +405,7 @@ async function main() {
 
   // ── Heartbeat Logger ─────────────────────────────────
   // Log heartbeat every 60 seconds to show daemon is alive
-  const HEARTBEAT_INTERVAL = 60 * 1000; // 60 seconds
+  const HEARTBEAT_INTERVAL = 15 * 1000; // 15 seconds
 
   const heartbeatTimer = setInterval(() => {
     const uptime = Date.now() - daemonStartTime;
