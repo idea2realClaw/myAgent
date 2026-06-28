@@ -27,6 +27,25 @@
       --radius: 12px;
       --radius-sm: 8px;
       --shadow: 0 4px 24px rgba(0,0,0,0.4);
+      --font-size: 1.125rem;
+    }
+
+    [data-theme="light"] {
+      --bg: #ffffff;
+      --bg2: #f5f5f7;
+      --bg3: #eeeeee;
+      --bg4: #e0e0e0;
+      --border: #d0d0d0;
+      --accent: #7c6af7;
+      --accent2: #6d5ce0;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --text: #1a1a2e;
+      --text2: #6b6b80;
+      --text3: #a0a0b0;
+      --shadow: 0 4px 24px rgba(0,0,0,0.1);
     }
 
     html, body {
@@ -51,7 +70,7 @@
       gap: 12px;
     }
     #topbar .logo {
-      font-size: 18px; font-weight: 700; color: var(--accent2);
+      font-size: 1.125rem; font-weight: 700; color: var(--accent2);
       display: flex; align-items: center; gap: 8px;
     }
     #topbar .logo svg { width: 24px; height: 24px; }
@@ -62,9 +81,9 @@
     }
     #topbar .status-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
     #topbar .status-dot.degraded { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
-    #topbar .status-text { font-size: 12px; color: var(--text2); }
+    #topbar .status-text { font-size: 0.75rem; color: var(--text2); }
     #topbar .provider-badge {
-      padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+      padding: 3px 10px; border-radius: 20px; font-size: 0.6875rem; font-weight: 600;
       background: var(--bg4); color: var(--accent2); border: 1px solid var(--border);
     }
 
@@ -72,10 +91,11 @@
     #sidebar {
       background: var(--bg2); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden;
+      height: 100%;
     }
     .sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
     .sidebar-section h3 {
-      font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+      font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.08em;
       color: var(--text3); margin-bottom: 10px;
     }
     /* Ensure sidebar bottom content isn't hidden behind log panel */
@@ -88,9 +108,192 @@
     .tab-btn {
       flex: 1; padding: 6px 8px; border: 1px solid var(--border);
       background: var(--bg3); color: var(--text2); border-radius: var(--radius-sm);
-      cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s;
+      cursor: pointer; font-size: 0.75rem; font-weight: 500; transition: all 0.15s;
     }
     .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* ── Navigation buttons (sidebar) ──────────────── */
+    .nav-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s;
+      width: 100%;
+    }
+    .nav-btn:hover {
+      background: var(--bg4);
+      border-color: var(--accent);
+    }
+    .nav-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .nav-btn-icon {
+      font-size: 1.125rem;
+    }
+    .nav-btn-text {
+      flex: 1;
+      text-align: left;
+    }
+
+    /* ── Chat button & Recent Chats ─────────────────── */
+    .chat-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .new-chat-btn {
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      color: var(--accent2);
+      cursor: pointer;
+      font-size: 1.25rem;
+      font-weight: 600;
+      transition: all 0.2s;
+      line-height: 1;
+    }
+    .new-chat-btn:hover {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    #recent-chats-list {
+      scrollbar-width: thin;
+    }
+    .chat-item {
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-bottom: 2px;
+      border: 1px solid transparent;
+      position: relative;
+      height: 36px;
+      display: flex;
+      align-items: center;
+    }
+    .chat-item:hover {
+      background: var(--bg3);
+      border-color: var(--border);
+    }
+    .chat-item.active {
+      background: var(--bg3);
+      border-color: var(--accent);
+    }
+    .chat-item-channel {
+      border-left: 3px solid var(--accent2);
+    }
+    .chat-item-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      overflow: hidden;
+    }
+    .chat-item-title {
+      font-size: 0.8125rem;
+      color: var(--text);
+      font-weight: 500;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .chat-item-edit {
+      background: none;
+      border: none;
+      color: var(--text3);
+      cursor: pointer;
+      font-size: 0.75rem;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: all 0.15s;
+      flex-shrink: 0;
+      opacity: 0;
+    }
+    .chat-item:hover .chat-item-edit {
+      opacity: 1;
+    }
+    .chat-item-edit:hover {
+      background: var(--bg4);
+      color: var(--accent2);
+    }
+
+    /* ── Sliding panels ─────────────────────────────── */
+    .panels-container {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+    }
+    .slide-panel {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg2);
+      transform: translateX(-100%);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+    }
+    .slide-panel.open {
+      transform: translateX(0);
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .panel-header h3 {
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text3);
+      margin: 0;
+    }
+    .panel-close-btn {
+      background: none;
+      border: none;
+      color: var(--text2);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 4px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+    .panel-close-btn:hover {
+      background: var(--bg4);
+      color: var(--text);
+    }
+    .panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+    }
 
     /* Skills list */
     #skills-list { overflow-y: auto; flex: 1; padding: 8px; }
@@ -102,8 +305,8 @@
     .skill-item:hover { background: var(--bg4); border-color: var(--border); }
     .skill-item.disabled { opacity: 0.5; }
     .skill-item .skill-header { display: flex; align-items: center; justify-content: space-between; }
-    .skill-item .skill-name { font-size: 13px; font-weight: 600; color: var(--accent2); }
-    .skill-item .skill-desc { font-size: 11px; color: var(--text2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .skill-item .skill-name { font-size: 0.8125rem; font-weight: 600; color: var(--accent2); }
+    .skill-item .skill-desc { font-size: 0.6875rem; color: var(--text2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     
     /* Toggle switch */
     .skill-toggle {
@@ -139,7 +342,7 @@
     /* Directory browser */
     #current-path {
       font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 11px;
+      font-size: 0.6875rem;
     }
     #directory-list {
       border: 1px solid var(--border);
@@ -148,7 +351,7 @@
       background: var(--bg4) !important;
     }
     
-    .skill-path { font-size: 10px; color: var(--text3); margin-top: 4px; word-break: break-all; }
+    .skill-path { font-size: 0.625rem; color: var(--text3); margin-top: 4px; word-break: break-all; }
 
     /* Identity status */
     .identity-files { display: flex; flex-direction: column; gap: 6px; }
@@ -158,23 +361,23 @@
     }
     .id-file .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); }
     .id-file .dot.loaded { background: var(--green); }
-    .id-file .label { font-size: 12px; color: var(--text2); }
+    .id-file .label { font-size: 0.75rem; color: var(--text2); }
 
     /* Settings form */
     .settings-form { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
     .form-group { display: flex; flex-direction: column; gap: 4px; }
-    .form-group label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
+    .form-group label { font-size: 0.6875rem; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
     .form-group select, .form-group input {
       padding: 7px 10px; border-radius: var(--radius-sm);
       background: var(--bg3); border: 1px solid var(--border);
-      color: var(--text); font-size: 13px;
+      color: var(--text); font-size: 0.8125rem;
     }
     .form-group select:focus, .form-group input:focus {
       outline: none; border-color: var(--accent);
     }
     .btn-save {
       padding: 8px; border-radius: var(--radius-sm); border: none;
-      background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+      background: var(--accent); color: #fff; font-size: 0.8125rem; font-weight: 600;
       cursor: pointer; transition: opacity 0.15s;
     }
     .btn-save:hover { opacity: 0.85; }
@@ -197,7 +400,7 @@
     .avatar {
       width: 34px; height: 34px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 14px; flex-shrink: 0; font-weight: 700;
+      font-size: 0.875rem; flex-shrink: 0; font-weight: 700;
     }
     .message.user .avatar { background: var(--accent); color: #fff; }
     .message.assistant .avatar { background: var(--bg4); color: var(--accent2); border: 1px solid var(--border); }
@@ -221,12 +424,12 @@
       align-self: flex-start;
     }
     .plan-card .plan-title {
-      font-size: 13px; font-weight: 700; color: var(--accent2); margin-bottom: 12px;
+      font-size: 0.8125rem; font-weight: 700; color: var(--accent2); margin-bottom: 12px;
       display: flex; align-items: center; gap: 8px;
     }
     .plan-card .plan-title .badge {
       background: var(--accent); color: #fff; border-radius: 20px;
-      padding: 2px 8px; font-size: 11px;
+      padding: 2px 8px; font-size: 0.6875rem;
     }
 
     .subtasks-grid {
@@ -245,10 +448,10 @@
     .subtask-header {
       display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
     }
-    .subtask-icon { font-size: 14px; }
-    .subtask-name { font-size: 12px; font-weight: 600; color: var(--text); }
+    .subtask-icon { font-size: 0.875rem; }
+    .subtask-name { font-size: 0.75rem; font-weight: 600; color: var(--text); }
     .subtask-status {
-      font-size: 10px; padding: 2px 6px; border-radius: 10px;
+      font-size: 0.625rem; padding: 2px 6px; border-radius: 10px;
       margin-left: auto; font-weight: 600;
     }
     .subtask-status.pending { background: var(--bg4); color: var(--text3); }
@@ -275,27 +478,27 @@
     /* ── Status bar ──────────────────────────────────────── */
     .status-bar {
       padding: 8px 16px; background: var(--bg3); border-radius: var(--radius-sm);
-      font-size: 12px; color: var(--text2); border-left: 3px solid var(--accent);
+      font-size: 0.75rem; color: var(--text2); border-left: 3px solid var(--accent);
       align-self: flex-start; max-width: 900px; width: 100%;
     }
     .status-bar.synthesizing { border-color: var(--yellow); }
     .status-bar.error { border-color: var(--red); color: var(--red); }
 
     /* ── Markdown rendering ──────────────────────────────── */
-    .md-content { font-size: 14px; line-height: 1.7; }
+    .md-content { font-size: 0.875rem; line-height: 1.7; }
     .md-content h1, .md-content h2, .md-content h3 {
       color: var(--accent2); margin: 12px 0 6px; font-weight: 700;
     }
-    .md-content h1 { font-size: 20px; }
-    .md-content h2 { font-size: 17px; }
-    .md-content h3 { font-size: 15px; }
+    .md-content h1 { font-size: 1.25rem; }
+    .md-content h2 { font-size: 1.0625rem; }
+    .md-content h3 { font-size: 0.9375rem; }
     .md-content p { margin-bottom: 10px; }
     .md-content ul, .md-content ol { padding-left: 20px; margin-bottom: 10px; }
     .md-content li { margin-bottom: 4px; }
     .md-content code {
       background: var(--bg3); border: 1px solid var(--border);
       padding: 2px 5px; border-radius: 4px; font-family: 'SF Mono', monospace;
-      font-size: 12px; color: var(--accent2);
+      font-size: 0.75rem; color: var(--accent2);
     }
     .md-content pre {
       background: var(--bg3); border: 1px solid var(--border);
@@ -308,7 +511,7 @@
     }
     .md-content table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
     .md-content th, .md-content td {
-      border: 1px solid var(--border); padding: 8px 12px; font-size: 13px;
+      border: 1px solid var(--border); padding: 8px 12px; font-size: 0.8125rem;
     }
     .md-content th { background: var(--bg3); color: var(--accent2); }
     .md-content a { color: var(--blue); }
@@ -327,7 +530,7 @@
     #input-row:focus-within { border-color: var(--accent); }
     #prompt-input {
       flex: 1; background: none; border: none; outline: none; resize: none;
-      color: var(--text); font-size: 14px; line-height: 1.5;
+      color: var(--text); font-size: 0.875rem; line-height: 1.5;
       max-height: 180px; min-height: 24px; font-family: inherit;
     }
     #prompt-input::placeholder { color: var(--text3); }
@@ -335,7 +538,7 @@
     .input-actions { display: flex; align-items: center; gap: 8px; }
     .toggle-parallel {
       display: flex; align-items: center; gap: 6px;
-      font-size: 12px; color: var(--text2); cursor: pointer;
+      font-size: 0.75rem; color: var(--text2); cursor: pointer;
       padding: 4px 8px; border-radius: var(--radius-sm);
       border: 1px solid var(--border); background: var(--bg4);
       transition: all 0.15s;
@@ -345,14 +548,14 @@
 
     #send-btn {
       padding: 8px 16px; border-radius: var(--radius-sm); border: none;
-      background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+      background: var(--accent); color: #fff; font-size: 0.8125rem; font-weight: 600;
       cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 6px;
     }
     #send-btn:hover { opacity: 0.85; }
     #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     #send-btn svg { width: 14px; height: 14px; }
 
-    #input-hint { font-size: 11px; color: var(--text3); margin-top: 6px; text-align: right; }
+    #input-hint { font-size: 0.6875rem; color: var(--text3); margin-top: 6px; text-align: right; }
 
     /* ── Typing indicator ────────────────────────────────── */
     .typing-dots span {
@@ -369,13 +572,13 @@
       justify-content: center; height: 100%;
       color: var(--text2); text-align: center; padding: 40px;
     }
-    #welcome .welcome-icon { font-size: 48px; margin-bottom: 16px; }
-    #welcome h2 { font-size: 22px; color: var(--text); margin-bottom: 8px; }
-    #welcome p { font-size: 14px; max-width: 400px; }
+    #welcome .welcome-icon { font-size: 3rem; margin-bottom: 16px; }
+    #welcome h2 { font-size: 1.375rem; color: var(--text); margin-bottom: 8px; }
+    #welcome p { font-size: 0.875rem; max-width: 400px; }
     #welcome .quick-prompts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; justify-content: center; }
     .quick-btn {
       padding: 8px 14px; border-radius: 20px; border: 1px solid var(--border);
-      background: var(--bg3); color: var(--text2); font-size: 12px; cursor: pointer;
+      background: var(--bg3); color: var(--text2); font-size: 0.75rem; cursor: pointer;
       transition: all 0.15s;
     }
     .quick-btn:hover { border-color: var(--accent); color: var(--accent2); }
@@ -393,7 +596,7 @@
     #toast {
       position: fixed; bottom: 24px; right: 24px; padding: 10px 16px;
       background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      font-size: 13px; color: var(--text); box-shadow: var(--shadow);
+      font-size: 0.8125rem; color: var(--text); box-shadow: var(--shadow);
       transform: translateY(100px); opacity: 0; transition: all 0.3s;
       z-index: 9999;
     }
@@ -405,15 +608,15 @@
     .tool-call-card {
       margin: 12px 0; padding: 12px 16px; border-radius: var(--radius-sm);
       background: var(--bg3); border: 1px solid var(--border);
-      font-size: 13px; max-width: 90%;
+      font-size: 0.8125rem; max-width: 90%;
     }
     .tool-call-header {
       display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
       font-weight: 600; color: var(--accent2);
     }
-    .tool-icon { font-size: 16px; }
-    .tool-name { font-size: 13px; }
-    .tool-call-args { color: var(--text2); font-size: 12px; margin-top: 8px; }
+    .tool-icon { font-size: 1rem; }
+    .tool-name { font-size: 0.8125rem; }
+    .tool-call-args { color: var(--text2); font-size: 0.75rem; margin-top: 8px; }
     .tool-call-args.collapsed { display: none; }
     .tool-call-args pre { margin: 8px 0 0 0; padding: 8px; background: var(--bg4); border-radius: 6px; overflow-x: auto; }
     .tool-url { color: var(--blue); word-break: break-all; }
@@ -422,18 +625,18 @@
     /* ── Tool Result Cards ────────────────────────────── */
     .tool-result-card {
       margin: 8px 0 16px 0; padding: 12px 16px; border-radius: var(--radius-sm);
-      font-size: 12px; max-width: 90%;
+      font-size: 0.75rem; max-width: 90%;
       border-left: 3px solid;
       cursor: pointer;
     }
     .tool-result-card.success { background: rgba(52,211,153,0.08); border-color: var(--green); }
     .tool-result-card.error { background: rgba(248,113,113,0.08); border-color: var(--red); }
     .tool-result-header { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-    .tool-result-icon { font-size: 14px; }
-    .tool-result-status { font-size: 12px; flex: 1; }
+    .tool-result-icon { font-size: 0.875rem; }
+    .tool-result-status { font-size: 0.75rem; flex: 1; }
     .tool-result-card.success .tool-result-status { color: var(--green); }
     .tool-result-card.error .tool-result-status { color: var(--red); }
-    .tool-toggle-icon { font-size: 10px; color: var(--text2); transition: transform 0.2s; }
+    .tool-toggle-icon { font-size: 0.625rem; color: var(--text2); transition: transform 0.2s; }
     .tool-result-output { max-height: 300px; overflow-y: auto; margin-top: 8px; }
     .tool-result-output.collapsed { display: none; }
     .tool-result-output pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
@@ -441,7 +644,7 @@
     .exec-output-card {
       margin: 8px 0 16px 0; border-radius: var(--radius-sm);
       background: #0a0a0f; border: 1px solid #1a1a2e;
-      font-size: 12px; max-width: 90%; overflow: hidden;
+      font-size: 0.75rem; max-width: 90%; overflow: hidden;
     }
     .exec-output-header {
       display: flex; align-items: center; gap: 8px;
@@ -449,24 +652,24 @@
       background: var(--bg3); border-bottom: 1px solid var(--border);
     }
     .exec-output-header:hover { background: var(--bg4); }
-    .exec-output-icon { font-size: 14px; }
-    .exec-output-title { font-size: 12px; color: var(--text2); flex: 1; }
-    .exec-output-status { font-size: 11px; font-weight: 600; }
+    .exec-output-icon { font-size: 0.875rem; }
+    .exec-output-title { font-size: 0.75rem; color: var(--text2); flex: 1; }
+    .exec-output-status { font-size: 0.6875rem; font-weight: 600; }
     .exec-output-status.running { color: var(--accent2); }
     .exec-output-status.done { color: var(--green); }
     .exec-output-status.error { color: var(--red); }
-    .exec-output-toggle { font-size: 10px; color: var(--text3); transition: transform 0.2s; }
+    .exec-output-toggle { font-size: 0.625rem; color: var(--text3); transition: transform 0.2s; }
     .exec-output-body {
       max-height: 400px; overflow-y: auto;
       padding: 10px 12px; font-family: 'SF Mono', 'Monaco', monospace;
-      font-size: 11px; line-height: 1.5; color: #d4d4d8;
+      font-size: 0.6875rem; line-height: 1.5; color: #d4d4d8;
       white-space: pre-wrap; word-break: break-all;
     }
     .exec-output-body.collapsed { display: none; }
     .exec-output-body .line-stdout { color: #d4d4d8; }
     .exec-output-body .line-stderr { color: #f87171; }
     .exec-output-footer {
-      padding: 4px 12px; font-size: 10px; color: var(--text3);
+      padding: 4px 12px; font-size: 0.625rem; color: var(--text3);
       border-top: 1px solid var(--border); background: var(--bg3);
     }
 
@@ -488,12 +691,12 @@
     margin-bottom: 12px;
   }
   .subtask-panel-title {
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 700;
     color: var(--accent2);
   }
   .subtask-panel-status {
-    font-size: 11px;
+    font-size: 0.6875rem;
     padding: 2px 8px;
     border-radius: 20px;
     margin-left: auto;
@@ -514,7 +717,7 @@
     margin-bottom: 10px;
   }
   .subtask-panel-label {
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--text2);
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -528,7 +731,7 @@
     background: var(--bg3);
     border: 1px solid var(--border);
     color: var(--text);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.5;
     resize: vertical;
   }
@@ -540,7 +743,7 @@
     background: var(--bg3);
     border: 1px solid var(--border);
     color: var(--text);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-all;
@@ -559,7 +762,7 @@
     background: var(--bg2);
     border-top: 1px solid var(--border);
     font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
     transition: height 0.2s;
     box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
   }
@@ -577,7 +780,7 @@
     user-select: none;
     background: var(--bg3);
     border-bottom: 1px solid var(--border);
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--text);
   }
   #log-toggle:hover { background: var(--bg4); }
@@ -586,7 +789,7 @@
     color: #fff;
     border-radius: 10px;
     padding: 1px 6px;
-    font-size: 10px;
+    font-size: 0.625rem;
     min-width: 18px;
     text-align: center;
   }
@@ -607,10 +810,10 @@
     line-height: 1.5;
   }
   .log-entry:hover { background: var(--bg4); }
-  .log-time { color: #888; font-size: 10px; white-space: nowrap; min-width: 70px; }
+  .log-time { color: #888; font-size: 0.625rem; white-space: nowrap; min-width: 70px; }
   .log-level {
     font-weight: 600;
-    font-size: 10px;
+    font-size: 0.625rem;
     padding: 0 4px;
     border-radius: 3px;
     text-transform: uppercase;
@@ -627,7 +830,7 @@
     border: none;
     color: var(--text);
     cursor: pointer;
-    font-size: 11px;
+    font-size: 0.6875rem;
     padding: 2px 8px;
     border-radius: 3px;
     opacity: 0.6;
@@ -636,7 +839,7 @@
 
   .model-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: 0.625rem;
     color: var(--text2);
     background: var(--bg3);
     padding: 1px 6px;
@@ -666,7 +869,7 @@
   }
   .approval-dialog h3 {
     margin: 0 0 8px 0;
-    font-size: 15px;
+    font-size: 0.9375rem;
     color: var(--yellow);
   }
   </style>
@@ -691,63 +894,108 @@
 
   <!-- Sidebar -->
   <nav id="sidebar">
-    <div class="sidebar-section" style="padding-bottom:0;border-bottom:none">
-      <div class="tab-nav">
-        <button class="tab-btn active" onclick="switchTab('skills')">Skills</button>
-        <button class="tab-btn" onclick="switchTab('identity')">Identity</button>
-        <button class="tab-btn" onclick="switchTab('settings')">Settings</button>
+    <!-- Chat button with + -->
+    <div class="sidebar-section" style="padding:12px 12px 8px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <button class="nav-btn chat-btn" onclick="showChat()" id="nav-btn-chat" style="flex:1">
+          <span class="nav-btn-icon">💬</span>
+          <span class="nav-btn-text">Chat</span>
+        </button>
+        <button onclick="newConversation()" class="new-chat-btn" title="New Conversation">+</button>
       </div>
     </div>
 
-    <!-- Skills tab -->
-    <div class="tab-content active" id="tab-skills" style="overflow:hidden;flex:1">
-      <div class="sidebar-section" style="padding-bottom:8px;display:flex;align-items:center;justify-content:space-between">
-        <h3 style="margin:0">Available Skills</h3>
-        <button onclick="showAddSkillDialog()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--accent2);cursor:pointer;font-size:11px;font-weight:600">
-          + Add from Dir
+    <!-- Navigation buttons -->
+    <div class="sidebar-section" style="padding:8px 12px;border-bottom:1px solid var(--border)">
+      <div class="nav-buttons">
+        <button class="nav-btn" onclick="togglePanel('skills')" id="nav-btn-skills">
+          <span class="nav-btn-icon">📚</span>
+          <span class="nav-btn-text">Skills</span>
+        </button>
+        <button class="nav-btn" onclick="togglePanel('identity')" id="nav-btn-identity">
+          <span class="nav-btn-icon">🪪</span>
+          <span class="nav-btn-text">Identity</span>
+        </button>
+        <button class="nav-btn" onclick="togglePanel('settings')" id="nav-btn-settings">
+          <span class="nav-btn-icon">⚙️</span>
+          <span class="nav-btn-text">Settings</span>
         </button>
       </div>
-      <div id="skills-list">
-        <div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">
-          Loading skills...
-        </div>
-      </div>
-      <div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px">
-        <button onclick="reloadSkills()" style="flex:1;padding:6px;border-radius:6px;border:1px dashed var(--border);background:none;color:var(--text3);cursor:pointer;font-size:12px">
-          ↻ Reload Skills
-        </button>
+    </div>
+
+    <!-- Recent Chats -->
+    <div class="sidebar-section" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">
+      <div style="padding:8px 12px 4px;font-size: 0.6875rem;color:var(--text2);font-weight:600;flex-shrink:0">Recent Chats</div>
+      <div id="recent-chats-list" style="flex:1;overflow-y:auto;padding:4px 8px;scrollbar-width:thin">
+        <!-- Chat items will be dynamically added here -->
       </div>
     </div>
 
-    <!-- Identity tab -->
-    <div class="tab-content" id="tab-identity">
-      <div class="sidebar-section">
-        <h3>Identity Files</h3>
-        <div class="identity-files" id="identity-files">
-          <div class="id-file" onclick="loadIdentityFile('ID.md')" style="cursor:pointer">
-            <div class="dot" id="dot-id"></div>
-            <span class="label">ID.md — Identity</span>
+    <!-- Sliding panels container -->
+    <div class="panels-container">
+      <!-- Skills panel -->
+      <div class="slide-panel" id="panel-skills">
+        <div class="panel-header">
+          <h3>Available Skills</h3>
+          <button onclick="closePanel('skills')" class="panel-close-btn">✕</button>
+        </div>
+        <div class="panel-content">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span style="font-size: 0.6875rem;color:var(--text2)">Manage your skills</span>
+            <button onclick="showAddSkillDialog()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--accent2);cursor:pointer;font-size: 0.6875rem;font-weight:600">
+              + Add
+            </button>
           </div>
-          <div class="id-file" onclick="loadIdentityFile('DNA.md')" style="cursor:pointer">
-            <div class="dot" id="dot-dna"></div>
-            <span class="label">DNA.md — Essence</span>
+          <div id="skills-list">
+            <div style="padding:20px;text-align:center;color:var(--text3);font-size: 0.75rem">
+              Loading skills...
+            </div>
           </div>
-          <div class="id-file" onclick="loadIdentityFile('Soul.md')" style="cursor:pointer">
-            <div class="dot" id="dot-soul"></div>
-            <span class="label">Soul.md — Spirit</span>
+          <div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px">
+            <button onclick="reloadSkills()" style="flex:1;padding:6px;border-radius:6px;border:1px dashed var(--border);background:none;color:var(--text3);cursor:pointer;font-size: 0.75rem">
+              ↻ Reload
+            </button>
           </div>
         </div>
       </div>
-      <div class="sidebar-section" style="flex:1">
-        <div style="font-size:11px;color:var(--accent2);margin-bottom:6px" id="identity-file-label">Select a file to edit</div>
-        <textarea id="identity-editor" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px;resize:vertical;outline:none;" placeholder="Click a file to load its content..."></textarea>
-        <button onclick="saveIdentityFile()" class="btn-save" style="width:100%;margin-top:8px;font-size:12px">Save</button>
-      </div>
-    </div>
 
-    <!-- Settings tab -->
-    <div class="tab-content" id="tab-settings" style="overflow-y:auto">
-      <div class="settings-form">
+      <!-- Identity panel -->
+      <div class="slide-panel" id="panel-identity">
+        <div class="panel-header">
+          <h3>Identity Files</h3>
+          <button onclick="closePanel('identity')" class="panel-close-btn">✕</button>
+        </div>
+        <div class="panel-content">
+          <div class="identity-files" id="identity-files">
+            <div class="id-file" onclick="loadIdentityFile('ID.md')" style="cursor:pointer">
+              <div class="dot" id="dot-id"></div>
+              <span class="label">ID.md — Identity</span>
+            </div>
+            <div class="id-file" onclick="loadIdentityFile('DNA.md')" style="cursor:pointer">
+              <div class="dot" id="dot-dna"></div>
+              <span class="label">DNA.md — Essence</span>
+            </div>
+            <div class="id-file" onclick="loadIdentityFile('Soul.md')" style="cursor:pointer">
+              <div class="dot" id="dot-soul"></div>
+              <span class="label">Soul.md — Spirit</span>
+            </div>
+          </div>
+          <div style="margin-top:12px;flex:1;display:flex;flex-direction:column">
+            <div style="font-size: 0.6875rem;color:var(--accent2);margin-bottom:6px" id="identity-file-label">Select a file to edit</div>
+            <textarea id="identity-editor" style="width:100%;height:100px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size: 0.75rem;padding:8px;resize:vertical;outline:none;" placeholder="Click a file to load its content..."></textarea>
+            <button onclick="saveIdentityFile()" class="btn-save" style="width:100%;margin-top:8px;font-size: 0.75rem">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings panel -->
+      <div class="slide-panel" id="panel-settings">
+        <div class="panel-header">
+          <h3>Settings</h3>
+          <button onclick="closePanel('settings')" class="panel-close-btn">✕</button>
+        </div>
+        <div class="panel-content" style="overflow-y:auto">
+          <div class="settings-form">
         <div class="form-group">
           <label>Provider</label>
           <select id="cfg-provider" onchange="onProviderChange()">
@@ -763,7 +1011,7 @@
           <input type="password" id="cfg-apikey" placeholder="sk-..." />
         </div>
         <div class="form-group" id="model-group">
-          <label>Model <span style="color:var(--text3);font-size:10px;text-transform:none">(type or pick from list)</span></label>
+          <label>Model <span style="color:var(--text3);font-size: 0.625rem;text-transform:none">(type or pick from list)</span></label>
           <input type="text" id="cfg-model" list="model-suggestions"
             placeholder="e.g. gpt-4o or nvidia/nemotron-3-super-120b-a12b:free"
             autocomplete="off" spellcheck="false" />
@@ -780,10 +1028,10 @@
         </div>
         <button class="btn-save" onclick="saveSettings()">Save Settings</button>
         <hr style="border-color:var(--border);margin:12px 0">
-        <h3 style="font-size:13px;color:var(--text2);margin-bottom:8px">📢 Channels</h3>
+        <h3 style="font-size: 0.8125rem;color:var(--text2);margin-bottom:8px">📢 Channels</h3>
         <div id="feishu-config" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;background:var(--bg3);margin-bottom:12px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <span style="font-size:12px;font-weight:600;color:var(--text)">飞书 (Feishu)</span>
+            <span style="font-size: 0.75rem;font-weight:600;color:var(--text)">飞书 (Feishu)</span>
             <label class="skill-toggle" style="width:36px;height:20px">
               <input type="checkbox" id="feishu-enabled" onchange="toggleFeishu()">
               <span class="toggle-slider"></span>
@@ -791,63 +1039,72 @@
           </div>
           <div id="feishu-settings" style="display:none">
             <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size:11px">App ID</label>
-              <input type="text" id="feishu-app-id" placeholder="cli_xxx" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+              <label style="font-size: 0.6875rem">App ID</label>
+              <input type="text" id="feishu-app-id" placeholder="cli_xxx" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
             </div>
             <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size:11px">App Secret</label>
-              <input type="password" id="feishu-app-secret" placeholder="***" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+              <label style="font-size: 0.6875rem">App Secret</label>
+              <input type="password" id="feishu-app-secret" placeholder="***" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
             </div>
             <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size:11px">Verification Token</label>
-              <input type="text" id="feishu-verification-token" placeholder="***" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+              <label style="font-size: 0.6875rem">Verification Token</label>
+              <input type="text" id="feishu-verification-token" placeholder="***" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
             </div>
             <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size:11px">Encrypt Key (可选)</label>
-              <input type="password" id="feishu-encrypt-key" placeholder="留空则不使用加密" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+              <label style="font-size: 0.6875rem">Encrypt Key (可选)</label>
+              <input type="password" id="feishu-encrypt-key" placeholder="留空则不使用加密" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
             </div>
             <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size:11px">Domain</label>
-              <select id="feishu-domain" style="width:100%;padding:6px 8px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
+              <label style="font-size: 0.6875rem">Domain</label>
+              <select id="feishu-domain" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
                 <option value="https://open.feishu.cn">飞书 (中国) - https://open.feishu.cn</option>
                 <option value="https://open.larksuite.com">Lark (国际) - https://open.larksuite.com</option>
               </select>
             </div>
-            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;padding:6px;background:var(--bg2);border-radius:4px">
+            <div style="font-size: 0.6875rem;color:var(--text3);margin-bottom:8px;padding:6px;background:var(--bg2);border-radius:4px">
               <div style="margin-bottom:4px">📍 Webhook URL:</div>
-              <code id="feishu-webhook-url" style="font-size:10px;word-break:break-all">启动后显示</code>
+              <code id="feishu-webhook-url" style="font-size: 0.625rem;word-break:break-all">启动后显示</code>
             </div>
             <div style="display:flex;gap:8px">
-              <button onclick="saveFeishuConfig()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:12px">保存</button>
-              <button onclick="testFeishuConnection()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px">测试连接</button>
+              <button onclick="saveFeishuConfig()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size: 0.75rem">保存</button>
+              <button onclick="testFeishuConnection()" style="flex:1;padding:6px;border-radius:4px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size: 0.75rem">测试连接</button>
             </div>
           </div>
         </div>
         <hr style="border-color:var(--border)">
         <div style="margin-bottom:12px">
-          <h3 style="font-size:13px;color:var(--text2);margin-bottom:8px">⚡ File Operations</h3>
-          <div style="display:flex;gap:8px;margin-bottom:8px">
-            <button onclick="undoFileEdit()" id="undo-btn" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px" disabled>↩️ Undo</button>
-            <button onclick="redoFileEdit()" id="redo-btn" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px" disabled>↪️ Redo</button>
+          <h3 style="font-size: 0.8125rem;color:var(--text2);margin-bottom:8px">🎨 显示设置</h3>
+          
+          <!-- 字体大小设置 -->
+          <div style="margin-bottom:12px">
+            <label style="font-size: 0.6875rem;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;display:block">字体大小</label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size: 0.6875rem;color:var(--text3)">18px</span>
+              <input type="range" id="font-size-slider" min="18" max="32" value="18" step="1" oninput="changeFontSize(this.value)" style="flex:1;accent-color:var(--accent)">
+              <span style="font-size: 0.6875rem;color:var(--text3)">32px</span>
+              <span id="font-size-value" style="font-size: 0.75rem;color:var(--accent2);min-width:40px;text-align:right">16px</span>
+            </div>
           </div>
-          <div id="snapshot-status" style="font-size:10px;color:var(--text3)">No file edits yet</div>
+          
+          <!-- 主题设置 -->
+          <div style="margin-bottom:12px">
+            <label style="font-size: 0.6875rem;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;display:block">主题</label>
+            <div style="display:flex;gap:8px">
+              <button onclick="setTheme('dark')" id="theme-dark-btn" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size: 0.75rem">🌙 深色</button>
+              <button onclick="setTheme('light')" id="theme-light-btn" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size: 0.75rem">☀️ 浅色</button>
+            </div>
+          </div>
         </div>
         <hr style="border-color:var(--border)">
-        <div style="margin-bottom:12px">
-          <h3 style="font-size:13px;color:var(--text2);margin-bottom:8px">📋 AGENTS.md</h3>
-          <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Project-specific rules for the agent. Loaded from AGENTS.md in workspace root.</p>
-          <div id="agents-md-status" style="font-size:11px;color:var(--text3);margin-bottom:8px">Checking...</div>
-          <button onclick="initAgentsMd()" id="init-agents-md-btn" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:12px">+ Create AGENTS.md</button>
-          <button onclick="reloadAgentsMd()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:12px;margin-top:6px">🔄 Reload AGENTS.md</button>
-        </div>
-        <hr style="border-color:var(--border)">
-        <button onclick="clearHistory()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size:12px">
+        <button onclick="clearHistory()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size: 0.75rem">
           Clear Chat History
         </button>
         <hr style="border-color:var(--border);margin-top:12px">
-        <button onclick="restartServer()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--accent);background:none;color:var(--accent);cursor:pointer;font-size:12px">
+        <button onclick="restartServer()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--accent);background:none;color:var(--accent);cursor:pointer;font-size: 0.75rem">
           🔄 Restart Server
         </button>
+      </div>
+        </div>
       </div>
     </div>
   </nav>
@@ -918,7 +1175,32 @@ let isThinking = false;
 // ── Subtask Panel（子任务面板）─────────────────────────────
 let subtaskPanels = {};
 
-function renderSubtaskPanel(taskId, title, instruction) {
+// ── Close panels when clicking main area ───────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const main = document.getElementById('main');
+  const messages = document.getElementById('messages');
+  const promptInput = document.getElementById('prompt-input');
+  
+  if (main) {
+    main.addEventListener('click', () => {
+      closeAllPanels();
+    });
+  }
+  
+  if (messages) {
+    messages.addEventListener('click', () => {
+      closeAllPanels();
+    });
+  }
+  
+  if (promptInput) {
+    promptInput.addEventListener('focus', () => {
+      closeAllPanels();
+    });
+  }
+});
+
+function renderSubtaskPanel(taskId, title, instruction, command) {
   hideWelcome();
   const container = document.getElementById('messages');
   const panelId = `panel-${taskId}`;
@@ -929,15 +1211,21 @@ function renderSubtaskPanel(taskId, title, instruction) {
   const el = document.createElement('div');
   el.className = 'subtask-panel';
   el.id = panelId;
+  
+  // 构建命令显示（如果有命令，显示在第一个文本框）
+  const commandHtml = command ? `
+    <div class="subtask-panel-section">
+      <div class="subtask-panel-label">命令（Command）</div>
+      <textarea class="subtask-panel-instruction" readonly>${escapeHtml(command)}</textarea>
+    </div>
+  ` : '';
+  
   el.innerHTML = `
     <div class="subtask-panel-header">
       <span class="subtask-panel-title">${escapeHtml(title)}</span>
       <span class="subtask-panel-status running">运行中...</span>
     </div>
-    <div class="subtask-panel-section">
-      <div class="subtask-panel-label">指令（Instruction）</div>
-      <textarea class="subtask-panel-instruction" readonly>${escapeHtml(instruction || '')}</textarea>
-    </div>
+    ${commandHtml}
     <div class="subtask-panel-section">
       <div class="subtask-panel-label">输出（Output）</div>
       <div class="subtask-panel-output" id="panel-output-${taskId}"></div>
@@ -987,9 +1275,9 @@ function appendLog(level, message, data) {
       .filter(([,v]) => v !== null && v !== undefined)
       .map(([k,v]) => `${k}=${typeof v === 'string' ? v.slice(0,60) : v}`)
       .join(' ');
-    if (extra) msg += ` <span style="color:#888;font-size:11px">${escapeHtml(extra)}</span>`;
+    if (extra) msg += ` <span style="color:#888;font-size: 0.6875rem">${escapeHtml(extra)}</span>`;
   } else if (typeof data === 'string') {
-    msg += ` <span style="color:#888;font-size:11px">${escapeHtml(data.slice(0,80))}</span>`;
+    msg += ` <span style="color:#888;font-size: 0.6875rem">${escapeHtml(data.slice(0,80))}</span>`;
   }
   el.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-msg">${msg}</span>`;
   body.appendChild(el);
@@ -1139,8 +1427,10 @@ function handleMessage(msg) {
   if (type === 'session_init') {
     appendLog('info', '🟢 WebSocket 已连接');
     loadConfig();
+    loadUISettings();
     loadSkills();
     loadIdentity();
+    initConversations();
   }
 
   else if (type === 'thinking') {
@@ -1158,7 +1448,7 @@ function handleMessage(msg) {
   }
 
   else if (type === 'subtask_panel') {
-    renderSubtaskPanel(msg.taskId, msg.title, msg.instruction);
+    renderSubtaskPanel(msg.taskId, msg.title, msg.instruction, msg.command);
   }
 
   else if (type === 'subtask_start') {
@@ -1245,6 +1535,10 @@ function handleMessage(msg) {
     subtaskCards = {};
     subtaskStreams = {};
     scrollToBottom();
+
+    // Save conversation after response is complete
+    saveCurrentConversation();
+    loadRecentChats();
   }
 
   else if (type === 'error') {
@@ -1519,8 +1813,8 @@ function renderPlanCard(plan) {
             <span class="subtask-name">${t.title}</span>
             <span class="subtask-status pending">pending</span>
           </div>
-          ${t.purpose ? `<div class="subtask-purpose" style="font-size:10px;color:var(--text3);margin-top:4px;padding:0 2px">🎯 ${t.purpose}</div>` : ''}
-          ${t.command ? `<div class="subtask-command" style="font-size:9px;color:var(--accent2);margin-top:3px;padding:2px 4px;background:var(--bg4);border-radius:4px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.command}</div>` : ''}
+          ${t.purpose ? `<div class="subtask-purpose" style="font-size: 0.625rem;color:var(--text3);margin-top:4px;padding:0 2px">🎯 ${t.purpose}</div>` : ''}
+          ${t.command ? `<div class="subtask-command" style="font-size: 0.5625rem;color:var(--accent2);margin-top:3px;padding:2px 4px;background:var(--bg4);border-radius:4px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.command}</div>` : ''}
           <div class="subtask-progress"><div class="subtask-progress-bar" id="stbar-${t.id}"></div></div>
         </div>
       `).join('')}
@@ -1750,6 +2044,9 @@ function sendMessage() {
   const text = input.value.trim();
   if (!text || !wsReady || isThinking) return;
 
+  // Create new conversation if needed (use first message as title)
+  ensureConversation(text);
+
   renderUserMessage(text);
 
   // Update current model alias for display in AI response
@@ -1768,11 +2065,21 @@ function sendMessage() {
   document.getElementById('send-btn').style.display = 'none';
   document.getElementById('stop-btn').style.display = 'flex';
 
+  // Send message to backend with conversation ID
   ws.send(JSON.stringify({
     type: 'chat',
     content: text,
+    conversationId: currentConversationId,
     parallel: document.getElementById('parallel-toggle').checked,
   }));
+
+  console.log(`[Conversation] Sending message to backend, conversationId: ${currentConversationId}`);
+
+  // Save conversation after sending
+  setTimeout(() => {
+    saveCurrentConversation();
+    loadRecentChats();
+  }, 500);
 }
 
 function stopMessage() {
@@ -1970,6 +2277,64 @@ function getModelsForProvider(provider) {
   return window._modelsCache[provider] || MODELS[provider] || [];
 }
 
+// ── 字体大小和主题设置 ─────────────────────────────
+
+function changeFontSize(size) {
+  const newSize = parseInt(size);
+  if (newSize < 18) size = 18;
+  if (newSize > 32) size = 32;
+  
+  // 应用到整个应用
+  document.documentElement.style.fontSize = size + 'px';
+  document.getElementById('font-size-value').textContent = size + 'px';
+  
+  // 保存到 localStorage
+  localStorage.setItem('agent-webui-font-size', size);
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  
+  // 更新按钮样式
+  const darkBtn = document.getElementById('theme-dark-btn');
+  const lightBtn = document.getElementById('theme-light-btn');
+  
+  if (theme === 'light') {
+    darkBtn.style.background = 'none';
+    darkBtn.style.color = 'var(--text)';
+    darkBtn.style.borderColor = 'var(--border)';
+    lightBtn.style.background = 'var(--accent)';
+    lightBtn.style.color = '#fff';
+    lightBtn.style.borderColor = 'var(--accent)';
+  } else {
+    darkBtn.style.background = 'var(--accent)';
+    darkBtn.style.color = '#fff';
+    darkBtn.style.borderColor = 'var(--accent)';
+    lightBtn.style.background = 'none';
+    lightBtn.style.color = 'var(--text)';
+    lightBtn.style.borderColor = 'var(--border)';
+  }
+  
+  // 保存到 localStorage
+  localStorage.setItem('agent-webui-theme', theme);
+}
+
+function loadUISettings() {
+  // 加载字体大小
+  const savedFontSize = localStorage.getItem('agent-webui-font-size');
+  if (savedFontSize) {
+    const slider = document.getElementById('font-size-slider');
+    if (slider) {
+      slider.value = savedFontSize;
+      changeFontSize(savedFontSize);
+    }
+  }
+  
+  // 加载主题
+  const savedTheme = localStorage.getItem('agent-webui-theme') || 'dark';
+  setTheme(savedTheme);
+}
+
 async function loadConfig() {
   // Load models first (from backend API)
   try {
@@ -2134,8 +2499,8 @@ function showApprovalDialog(taskId, reason, tool, args) {
   overlay.innerHTML = `
     <div class="approval-dialog">
       <h3>⚠️ 需要批准</h3>
-      <p style="font-size:12px;color:var(--text2);margin:8px 0">${reason}</p>
-      <div style="background:var(--bg3);padding:8px;border-radius:6px;font-size:11px;margin-bottom:12px">
+      <p style="font-size: 0.75rem;color:var(--text2);margin:8px 0">${reason}</p>
+      <div style="background:var(--bg3);padding:8px;border-radius:6px;font-size: 0.6875rem;margin-bottom:12px">
         <div><strong>工具:</strong> ${tool}</div>
         <div><strong>参数:</strong> <code>${JSON.stringify(args).slice(0, 200)}</code></div>
       </div>
@@ -2205,16 +2570,16 @@ function checkServerReady(retries = 0) {
 function loadSkills() {
   fetch('/api/skills').then(r => r.json()).then(renderSkills).catch(() => {
     document.getElementById('skills-list').innerHTML =
-      '<div style="padding:16px;color:var(--text3);font-size:12px">No skills found</div>';
+      '<div style="padding:16px;color:var(--text3);font-size: 0.75rem">No skills found</div>';
   });
 }
 
 function renderSkills(skills) {
   const list = document.getElementById('skills-list');
   if (!skills || !skills.length) {
-    list.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+    list.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text3);font-size: 0.75rem">
       No skills found.<br><br>
-      Add skills to:<br><code style="font-size:10px">.claude/skills/name/SKILL.md</code>
+      Add skills to:<br><code style="font-size: 0.625rem">.claude/skills/name/SKILL.md</code>
     </div>`;
     return;
   }
@@ -2229,7 +2594,7 @@ function renderSkills(skills) {
         </label>
       </div>
       <div class="skill-desc">${s.description}</div>
-      <div class="skill-path" style="font-size:10px;color:var(--text3);margin-top:4px">${s.path || ''}</div>
+      <div class="skill-path" style="font-size: 0.625rem;color:var(--text3);margin-top:4px">${s.path || ''}</div>
     </div>
   `).join('');
 }
@@ -2256,30 +2621,30 @@ function showAddSkillDialog() {
         
         <div style="display:flex;flex-direction:column;gap:12px">
           <div>
-            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Source Directory (containing SKILL.md)</label>
+            <label style="font-size: 0.75rem;color:var(--text2);display:block;margin-bottom:4px">Source Directory (containing SKILL.md)</label>
             <div style="display:flex;gap:8px">
-              <input type="text" id="skill-source-path" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder="/path/to/skills" />
-              <button onclick="showDirectoryBrowser('source')" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:13px;white-space:nowrap">
+              <input type="text" id="skill-source-path" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size: 0.8125rem" placeholder="/path/to/skills" />
+              <button onclick="showDirectoryBrowser('source')" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size: 0.8125rem;white-space:nowrap">
                 📂 Browse
               </button>
             </div>
           </div>
           
           <div>
-            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Target Directory (to copy skill to)</label>
+            <label style="font-size: 0.75rem;color:var(--text2);display:block;margin-bottom:4px">Target Directory (to copy skill to)</label>
             <div style="display:flex;gap:8px">
-              <input type="text" id="skill-target-dir" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px" placeholder=".claude/skills" />
-              <button onclick="showDirectoryBrowser('target')" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:13px;white-space:nowrap">
+              <input type="text" id="skill-target-dir" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size: 0.8125rem" placeholder=".claude/skills" />
+              <button onclick="showDirectoryBrowser('target')" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size: 0.8125rem;white-space:nowrap">
                 📂 Browse
               </button>
             </div>
           </div>
           
           <div style="display:flex;gap:8px;margin-top:8px">
-            <button onclick="scanSkillDirectory()" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size:13px">
+            <button onclick="scanSkillDirectory()" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size: 0.8125rem">
               🔍 Scan Directory
             </button>
-            <button onclick="addSkillFromDirectory()" style="flex:1;padding:8px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600">
+            <button onclick="addSkillFromDirectory()" style="flex:1;padding:8px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size: 0.8125rem;font-weight:600">
               ➕ Add Skill
             </button>
           </div>
@@ -2287,7 +2652,7 @@ function showAddSkillDialog() {
           <div id="skill-scan-result" style="margin-top:8px;max-height:200px;overflow-y:auto"></div>
         </div>
         
-        <button onclick="closeAddSkillDialog()" style="margin-top:16px;padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:13px;float:right">
+        <button onclick="closeAddSkillDialog()" style="margin-top:16px;padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size: 0.8125rem;float:right">
           Close
         </button>
         <div style="clear:both"></div>
@@ -2311,23 +2676,23 @@ async function showDirectoryBrowser(target) {
         <h3 style="margin:0 0 16px;color:var(--text)">Select Directory</h3>
         
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-          <button onclick="navigateDirectory('..')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size:12px">
+          <button onclick="navigateDirectory('..')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size: 0.75rem">
             ⬆️ Up
           </button>
-          <div id="current-path" style="flex:1;padding:6px 10px;border-radius:6px;background:var(--bg3);color:var(--text2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          <div id="current-path" style="flex:1;padding:6px 10px;border-radius:6px;background:var(--bg3);color:var(--text2);font-size: 0.6875rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
             Loading...
           </div>
         </div>
         
         <div id="directory-list" style="flex:1;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;min-height:200px;max-height:300px">
-          <div style="padding:16px;text-align:center;color:var(--text3);font-size:12px">Loading directories...</div>
+          <div style="padding:16px;text-align:center;color:var(--text3);font-size: 0.75rem">Loading directories...</div>
         </div>
         
         <div style="display:flex;gap:8px;margin-top:16px">
-          <button onclick="selectCurrentDirectory()" style="flex:1;padding:8px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600">
+          <button onclick="selectCurrentDirectory()" style="flex:1;padding:8px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size: 0.8125rem;font-weight:600">
             ✅ Select This Directory
           </button>
-          <button onclick="closeDirectoryBrowser()" style="padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:13px">
+          <button onclick="closeDirectoryBrowser()" style="padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size: 0.8125rem">
             Cancel
           </button>
         </div>
@@ -2352,7 +2717,7 @@ async function loadDirectoryList(dirPath) {
     
     if (result.error) {
       document.getElementById('directory-list').innerHTML = `
-        <div style="padding:16px;text-align:center;color:var(--red);font-size:12px">${result.error}</div>
+        <div style="padding:16px;text-align:center;color:var(--red);font-size: 0.75rem">${result.error}</div>
       `;
       return;
     }
@@ -2365,19 +2730,19 @@ async function loadDirectoryList(dirPath) {
     
     if (!result.directories || !result.directories.length) {
       container.innerHTML = `
-        <div style="padding:16px;text-align:center;color:var(--text3);font-size:12px">No subdirectories found</div>
+        <div style="padding:16px;text-align:center;color:var(--text3);font-size: 0.75rem">No subdirectories found</div>
       `;
       return;
     }
     
     container.innerHTML = result.directories.map(dir => `
-      <div onclick="navigateDirectory('${dir.path.replace(/'/g, "\\'")}')" style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text);hover:background:var(--bg4)" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='none'">
+      <div onclick="navigateDirectory('${dir.path.replace(/'/g, "\\'")}')" style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size: 0.8125rem;color:var(--text);hover:background:var(--bg4)" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='none'">
         📁 ${dir.name}
       </div>
     `).join('');
   } catch (err) {
     document.getElementById('directory-list').innerHTML = `
-      <div style="padding:16px;text-align:center;color:var(--red);font-size:12px">Failed to load directories: ${err.message}</div>
+      <div style="padding:16px;text-align:center;color:var(--red);font-size: 0.75rem">Failed to load directories: ${err.message}</div>
     `;
   }
 }
@@ -2432,22 +2797,22 @@ function scanSkillDirectory() {
     .then(result => {
       const container = document.getElementById('skill-scan-result');
       if (result.error) {
-        container.innerHTML = `<div style="padding:8px;color:var(--red);font-size:12px">${result.error}</div>`;
+        container.innerHTML = `<div style="padding:8px;color:var(--red);font-size: 0.75rem">${result.error}</div>`;
         return;
       }
       
       if (!result.skills || !result.skills.length) {
-        container.innerHTML = `<div style="padding:8px;color:var(--text3);font-size:12px">No skills found in directory</div>`;
+        container.innerHTML = `<div style="padding:8px;color:var(--text3);font-size: 0.75rem">No skills found in directory</div>`;
         return;
       }
       
       container.innerHTML = `
-        <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Found ${result.skills.length} skill(s):</div>
+        <div style="font-size: 0.75rem;color:var(--text2);margin-bottom:8px">Found ${result.skills.length} skill(s):</div>
         ${result.skills.map(s => `
-          <div style="padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:4px;font-size:12px">
+          <div style="padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:4px;font-size: 0.75rem">
             <div style="font-weight:600;color:var(--text)">${s.name}</div>
-            <div style="color:var(--text2);font-size:11px">${s.description}</div>
-            ${s.alreadyLoaded ? '<div style="color:var(--green);font-size:10px;margin-top:2px">Already loaded</div>' : ''}
+            <div style="color:var(--text2);font-size: 0.6875rem">${s.description}</div>
+            ${s.alreadyLoaded ? '<div style="color:var(--green);font-size: 0.625rem;margin-top:2px">Already loaded</div>' : ''}
           </div>
         `).join('')}
       `;
@@ -2545,15 +2910,370 @@ function saveIdentityFile() {
   }).catch(() => showToast('Failed to save', 'error'));
 }
 
-// ── Tab switching ─────────────────────────────────────────────
-function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+// ── Panel sliding ────────────────────────────────────────
 
-  const tabMap = { skills: 0, identity: 1, settings: 2 };
-  document.querySelectorAll('.tab-btn')[tabMap[name]].classList.add('active');
-  document.getElementById(`tab-${name}`).classList.add('active');
+let currentOpenPanel = null;
+
+function togglePanel(name) {
+  const panel = document.getElementById(`panel-${name}`);
+  const btn = document.getElementById(`nav-btn-${name}`);
+  
+  if (!panel) return;
+  
+  // If clicking the same panel that's open, close it
+  if (currentOpenPanel === name) {
+    closePanel(name);
+    return;
+  }
+  
+  // Close currently open panel
+  if (currentOpenPanel) {
+    const currentPanel = document.getElementById(`panel-${currentOpenPanel}`);
+    const currentBtn = document.getElementById(`nav-btn-${currentOpenPanel}`);
+    if (currentPanel) currentPanel.classList.remove('open');
+    if (currentBtn) currentBtn.classList.remove('active');
+  }
+  
+  // Open new panel
+  panel.classList.add('open');
+  if (btn) btn.classList.add('active');
+  currentOpenPanel = name;
 }
+
+function closePanel(name) {
+  const panel = document.getElementById(`panel-${name}`);
+  const btn = document.getElementById(`nav-btn-${name}`);
+  
+  if (panel) panel.classList.remove('open');
+  if (btn) btn.classList.remove('active');
+  
+  if (currentOpenPanel === name) {
+    currentOpenPanel = null;
+  }
+}
+
+function closeAllPanels() {
+  if (currentOpenPanel) {
+    closePanel(currentOpenPanel);
+  }
+}
+
+// ── Chat/Conversation Management ─────────────────────────
+let currentConversationId = null;
+let conversations = {};
+
+function showChat() {
+  // Close all panels
+  closeAllPanels();
+  // Remove active state from Chat button (it's not a panel)
+  const chatBtn = document.getElementById('nav-btn-chat');
+  if (chatBtn) chatBtn.classList.remove('active');
+  // Focus on input
+  const input = document.getElementById('prompt-input');
+  if (input) input.focus();
+}
+
+function newConversation() {
+  // Generate new conversation ID
+  const convId = 'conv-' + Date.now();
+  const conv = {
+    id: convId,
+    title: 'New Conversation',
+    messages: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  
+  // Save to conversations
+  conversations[convId] = conv;
+  saveConversationsToStorage();
+  
+  // Switch to this conversation
+  selectChat(convId);
+  
+  // Clear messages display
+  const messages = document.getElementById('messages');
+  if (messages) {
+    messages.innerHTML = '';
+    showWelcome();
+  }
+  
+  // Update recent chats list
+  loadRecentChats();
+}
+
+function selectChat(chatId) {
+  // Save current conversation first
+  if (currentConversationId && conversations[currentConversationId]) {
+    saveCurrentConversation();
+  }
+  
+  // Switch to selected conversation
+  currentConversationId = chatId;
+  const conv = conversations[chatId];
+  
+  console.log(`[Conversation] Switched to: ${chatId}, title: "${conv?.title}"`);
+  
+  if (!conv) return;
+  
+  // Update UI
+  const messages = document.getElementById('messages');
+  if (messages) {
+    messages.innerHTML = '';
+    if (conv.messages && conv.messages.length > 0) {
+      // Hide welcome screen
+      hideWelcome();
+      // Render messages
+      conv.messages.forEach(msg => {
+        appendMessage(msg.role, msg.content, msg.model);
+      });
+    } else {
+      showWelcome();
+    }
+  }
+  
+  // Update active state in recent chats list
+  document.querySelectorAll('.chat-item').forEach(item => {
+    item.classList.remove('active');
+  });
+  const chatItem = document.getElementById(`chat-${chatId}`);
+  if (chatItem) chatItem.classList.add('active');
+  
+  // Close all panels
+  showChat();
+}
+
+function deleteChat(chatId, event) {
+  if (event) {
+    event.stopPropagation();
+  }
+  
+  if (!confirm('Delete this conversation?')) return;
+  
+  delete conversations[chatId];
+  saveConversationsToStorage();
+  
+  // If deleting current conversation, switch to another or create new
+  if (currentConversationId === chatId) {
+    const keys = Object.keys(conversations);
+    if (keys.length > 0) {
+      selectChat(keys[0]);
+    } else {
+      newConversation();
+    }
+  }
+  
+  loadRecentChats();
+}
+
+function saveCurrentConversation() {
+  if (!currentConversationId || !conversations[currentConversationId]) return;
+  
+  const conv = conversations[currentConversationId];
+  const messages = document.getElementById('messages');
+  if (!messages) return;
+  
+  // Collect messages from DOM
+  const messageElements = messages.querySelectorAll('.msg');
+  const msgArray = [];
+  messageElements.forEach(el => {
+    const role = el.classList.contains('user') ? 'user' : 'assistant';
+    const content = el.querySelector('.msg-content')?.innerText || '';
+    if (content) {
+      msgArray.push({ role, content });
+    }
+  });
+  
+  conv.messages = msgArray;
+  conv.updatedAt = new Date().toISOString();
+  
+  // Update title from first message
+  if (msgArray.length > 0 && conv.title === 'New Conversation') {
+    const firstMsg = msgArray[0].content;
+    conv.title = firstMsg.substring(0, 50) + (firstMsg.length > 50 ? '...' : '');
+  }
+  
+  saveConversationsToStorage();
+}
+
+function saveConversationsToStorage() {
+  try {
+    localStorage.setItem('agent-webui-conversations', JSON.stringify(conversations));
+  } catch (e) {
+    console.error('Failed to save conversations:', e);
+  }
+}
+
+function loadConversationsFromStorage() {
+  try {
+    const saved = localStorage.getItem('agent-webui-conversations');
+    if (saved) {
+      conversations = JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Failed to load conversations:', e);
+    conversations = {};
+  }
+  
+  // Ensure "Channel" conversation exists for Feishu messages
+  if (!conversations['channel']) {
+    conversations['channel'] = {
+      id: 'channel',
+      title: 'Channel',
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isChannel: true
+    };
+  } else {
+    // Update existing channel title
+    conversations['channel'].title = 'Channel';
+    conversations['channel'].isChannel = true;
+  }
+}
+
+function loadRecentChats() {
+  const list = document.getElementById('recent-chats-list');
+  if (!list) return;
+  
+  // Sort: Channel first, then by updatedAt
+  const sorted = Object.values(conversations)
+    .sort((a, b) => {
+      // Channel always first
+      if (a.isChannel || a.id === 'channel') return -1;
+      if (b.isChannel || b.id === 'channel') return 1;
+      // Then by updatedAt
+      return new Date(b.updatedAt) - new Date(a.updatedAt);
+    });
+  
+  if (sorted.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size: 0.75rem">No conversations yet</div>';
+    return;
+  }
+  
+  list.innerHTML = sorted.map(conv => {
+    const isChannel = conv.isChannel || conv.id === 'channel';
+    const displayTitle = isChannel ? 'Channel' : (conv.title || 'New Conversation');
+    
+    return `
+      <div class="chat-item ${isChannel ? 'chat-item-channel' : ''} ${conv.id === currentConversationId ? 'active' : ''}" 
+           id="chat-${conv.id}" 
+           onclick="selectChat('${conv.id}')"
+           title="${escapeHtml(displayTitle)}">
+        <div class="chat-item-row">
+          <div class="chat-item-title">
+            ${isChannel ? '📡' : '💬'} ${escapeHtml(displayTitle)}
+          </div>
+          ${!isChannel ? `
+            <button class="chat-item-edit" onclick="editChatTitle('${conv.id}', event)" title="Edit title">✎</button>
+            <button class="chat-item-delete" onclick="deleteChat('${conv.id}', event)" title="Delete">✕</button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function editChatTitle(chatId, event) {
+  if (event) {
+    event.stopPropagation();
+  }
+  
+  const conv = conversations[chatId];
+  if (!conv) return;
+  
+  const newTitle = prompt('Edit conversation title:', conv.title);
+  if (newTitle && newTitle.trim()) {
+    conv.title = newTitle.trim();
+    conv.updatedAt = new Date().toISOString();
+    saveConversationsToStorage();
+    loadRecentChats();
+  }
+}
+
+function initConversations() {
+  loadConversationsFromStorage();
+  loadRecentChats();
+  
+  // Select last active conversation (don't create new one)
+  const keys = Object.keys(conversations);
+  if (keys.length > 0) {
+    // Find most recent conversation (excluding Channel if it's empty)
+    const sorted = Object.values(conversations)
+      .filter(conv => conv.messages && conv.messages.length > 0)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    
+    if (sorted.length > 0) {
+      selectChat(sorted[0].id);
+    } else {
+      // No conversations with messages, show welcome
+      const messages = document.getElementById('messages');
+      if (messages) {
+        messages.innerHTML = '';
+        showWelcome();
+      }
+    }
+  } else {
+    // No conversations at all, show welcome
+    const messages = document.getElementById('messages');
+    if (messages) {
+      messages.innerHTML = '';
+      showWelcome();
+    }
+  }
+  
+  // Set currentConversationId to null so first message creates new conversation
+  currentConversationId = null;
+}
+
+// Create new conversation when user sends first message
+function ensureConversation(firstMessage) {
+  if (!currentConversationId || !conversations[currentConversationId]) {
+    const convId = 'conv-' + Date.now();
+    // Use first message as title (truncated to 50 chars)
+    const title = firstMessage 
+      ? firstMessage.substring(0, 50) + (firstMessage.length > 50 ? '...' : '')
+      : 'New Conversation';
+    
+    const conv = {
+      id: convId,
+      title: title,
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    conversations[convId] = conv;
+    currentConversationId = convId;
+    saveConversationsToStorage();
+    loadRecentChats();
+    
+    console.log(`[Conversation] Created: ${convId}, title: "${title}"`);
+    
+    // Clear messages display
+    const messages = document.getElementById('messages');
+    if (messages) {
+      messages.innerHTML = '';
+      showWelcome();
+    }
+  }
+}
+
+function newConversation() {
+  ensureConversation();
+}
+
+// Modify sendMessage to save conversation
+const originalSendMessage = window.sendMessage;
+window.sendMessage = function() {
+  const result = originalSendMessage ? originalSendMessage.apply(this, arguments) : null;
+  // Save after sending
+  setTimeout(() => {
+    saveCurrentConversation();
+    loadRecentChats();
+  }, 1000);
+  return result;
+};
 
 // ── Toast ─────────────────────────────────────────────────────
 function showToast(msg, type = '') {

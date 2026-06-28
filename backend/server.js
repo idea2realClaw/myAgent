@@ -724,6 +724,10 @@ function buildLLMMessages(system, history) {
 async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
   const userMessage = msg.content;
+  const conversationId = msg.conversationId || 'unknown';
+
+  // Log conversation information
+  console.log(`[Conversation] sessionId=${sessionId}, conversationId=${conversationId}, message="${userMessage.substring(0, 100)}..."`);
 
   // ── Direct tool/command execution (skip LLM) ──────────
   // If user sends JSON with "command" or "tool" field, execute directly

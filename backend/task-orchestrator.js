@@ -392,9 +392,13 @@ JSON 格式：
    * Guarantees a result for every step.
    */
   async executeSubtask(subtask, context, onChunk) {
-    const { id, title, tool, args, depends_on } = subtask;
+    const { id, title, tool, args, depends_on, purpose } = subtask;
 
-    this.onProgress({ type: 'subtask_panel', taskId: id, title, instruction: `${tool}(${JSON.stringify(args).slice(0, 200)})` });
+    // 发送 subtask_panel 消息，包含 purpose（目的）和 command（具体命令）
+    const commandStr = tool === 'llm_reason'
+      ? `llm_reason(prompt: "${args.prompt || args.description || title}")`
+      : `${tool}(${JSON.stringify(args)})`;
+    this.onProgress({ type: 'subtask_panel', taskId: id, title: purpose || title, purpose: purpose || '', command: commandStr, instruction: `${tool}(${JSON.stringify(args).slice(0, 200)})` });
     this.onProgress({ type: 'subtask_start', taskId: id, title });
 
     // Build dependency context (results from previous steps)
