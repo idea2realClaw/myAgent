@@ -841,9 +841,10 @@ async function handleChat(sessionId, session, msg) {
     });
 
     // Step 2: Execute subtasks (parallel where possible)
-    const results = await orchestrator.executeAll(plan, context, (taskId, chunk) => {
+    const executionResult = await orchestrator.executeAll(plan, context, (taskId, chunk) => {
       // chunk events already sent via onProgress
     });
+    const results = executionResult.results || [];
 
     // Step 3: Synthesize if multiple subtasks
     let finalAnswer;
@@ -984,7 +985,8 @@ setMessageProcessor(async (message, context) => {
   
   try {
     const plan = await orchestrator.decompose(message, system);
-    const results = await orchestrator.executeAll(plan, { system, history: [] }, (taskId, chunk) => {});
+    const executionResult = await orchestrator.executeAll(plan, { system, history: [] }, (taskId, chunk) => {});
+    const results = executionResult.results || [];
     
     let finalAnswer;
     if (results.length === 1) {
