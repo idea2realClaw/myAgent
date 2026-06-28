@@ -357,6 +357,34 @@ IMPORTANT: Return ONLY the JSON object, no other text.`;
       results: allResults,
     };
   }
+
+  /**
+   * Synthesize results from multiple subtasks into a final answer
+   * Uses LLM to combine and summarize the results
+   */
+  async synthesize(originalRequest, results, context) {
+    const { system, history } = context || {};
+    
+    // Build a summary of all results
+    const resultSummary = results.map(r => 
+      `[${r.id}] ${r.title}\nStatus: ${r.status}\nResult: ${r.result?.slice(0, 500) || '(no result)'}`
+    ).join('\n\n---\n\n');
+    
+    const messages = [
+      { role: 'system', content: system || 'You are a helpful AI assistant.' },
+      ...(history || []).slice(-10),
+      { role: 'user', content: `Original request: ${originalRequest}\n\nHere are the results from executing subtasks:\n\n${resultSummary}\n\nPlease synthesize these results into a clear, comprehensive final answer.` },
+    ];
+    
+    try {
+      const llmResponse = await this.llm.chat(messages, { temperature: 0.7, maxTokens: 2000 });
+      return llmResponse;
+    } catch (err) {
+      console.error('[TaskOrchestrator] Synthesis failed:', err.message);
+      // Fallback: return raw results
+      return `Task execution completed. Results:\n\n${resultSummary}`;
+    }
+  }
 }
 
 export default TaskOrchestrator;
