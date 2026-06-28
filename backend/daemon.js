@@ -392,6 +392,7 @@ async function main() {
 
   writePid();
 
+  const daemonStartTime = Date.now();
   log(`Agent WebUI Daemon starting...`);
   log(`Server: ${CONFIG.serverJs}`);
   log(`Log: ${CONFIG.logFile}`);
@@ -401,6 +402,28 @@ async function main() {
 
   // Start server process
   startServer();
+
+  // ── Heartbeat Logger ─────────────────────────────────
+  // Log heartbeat every 60 seconds to show daemon is alive
+  const HEARTBEAT_INTERVAL = 60 * 1000; // 60 seconds
+
+  const heartbeatTimer = setInterval(() => {
+    const uptime = Date.now() - daemonStartTime;
+    const uptimeMinutes = Math.floor(uptime / 60000);
+    const uptimeSeconds = Math.floor((uptime % 60000) / 1000);
+    
+    const memUsage = process.memoryUsage();
+    const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+    
+    const serverStatus = serverProcess ? `Running (PID: ${serverProcess.pid})` : 'Stopped';
+    
+    log(`♥ Heartbeat | Uptime: ${uptimeMinutes}m ${uptimeSeconds}s | Memory: ${memMB}MB | Server: ${serverStatus}`, 'info');
+  }, HEARTBEAT_INTERVAL);
+
+  log(`Heartbeat logger started (interval: ${HEARTBEAT_INTERVAL / 1000}s)`, 'info');
+
+  // Store timer reference for cleanup
+  process._heartbeatTimer = heartbeatTimer;
 
   // Periodically check health
   setInterval(async () => {
@@ -412,6 +435,13 @@ async function main() {
     }
   }, 60000); // Check every 60 seconds
 }
+
+// Cleanup heartbeat on shutdown
+process.on('exit', () => {
+  if (process._heartbeatTimer) {
+    clearInterval(process._heartbeatTimer);
+  }
+});
 
 main().catch((err) => {
   log(`Fatal error: ${err.message}`, 'error');

@@ -1010,6 +1010,38 @@ server.listen(PORT, () => {
   console.log(`   Identity: ${JSON.stringify(identity.getSummary())}`);
   console.log(`   Skills loaded: ${skillLoader.getAll().length}`);
   console.log(`   Config: ${CONFIG_FILE}\n`);
+
+  // ── Heartbeat Logger ─────────────────────────────────────
+  // Log heartbeat every 60 seconds to show server is alive
+  const HEARTBEAT_INTERVAL = 60 * 1000; // 60 seconds
+  const startTime = Date.now();
+
+  const heartbeatTimer = setInterval(() => {
+    const uptime = Date.now() - startTime;
+    const uptimeMinutes = Math.floor(uptime / 60000);
+    const uptimeSeconds = Math.floor((uptime % 60000) / 1000);
+    
+    const memUsage = process.memoryUsage();
+    const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+    
+    const activeConnections = sessions.size;
+    
+    const timestamp = new Date().toISOString();
+    console.log(`[Heartbeat] ${timestamp} | Uptime: ${uptimeMinutes}m ${uptimeSeconds}s | Memory: ${memMB}MB | Active Connections: ${activeConnections}`);
+  }, HEARTBEAT_INTERVAL);
+
+  // Store timer reference for cleanup
+  server._heartbeatTimer = heartbeatTimer;
+
+  console.log(`[Heartbeat] Logger started (interval: ${HEARTBEAT_INTERVAL / 1000}s)\n`);
+});
+
+// Cleanup heartbeat on server close
+server.on('close', () => {
+  if (server._heartbeatTimer) {
+    clearInterval(server._heartbeatTimer);
+    console.log('[Heartbeat] Logger stopped');
+  }
 });
 
 export { app, server };

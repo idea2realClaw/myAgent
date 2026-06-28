@@ -160,15 +160,70 @@ show_status() {
   fi
 }
 
-# Function to view logs
-view_logs() {
+# Function to view logs (follow mode)
+follow_logs() {
   local log_file="$SCRIPT_DIR/logs/agent-webui-daemon.log"
   if [ -f "$log_file" ]; then
-    echo "📋 Recent logs (last 50 lines):"
+    echo "📋 Following logs (Ctrl+C to stop)..."
+    echo "   Log file: $log_file"
     echo ""
-    tail -50 "$log_file"
+    tail -f "$log_file"
   else
     echo "ℹ️  No log file found at $log_file"
+    echo "   Start the daemon first: $0 start"
+  fi
+}
+
+# Function to run in foreground (development mode)
+run_foreground() {
+  echo "🚀 Starting MyAgent in development mode..."
+  echo "   Logs will be displayed in this terminal"
+  echo "   Press Ctrl+C to stop following logs (server will keep running)"
+  echo ""
+  
+  # Create required directories
+  mkdir -p "$SCRIPT_DIR/identity"
+  mkdir -p "$SCRIPT_DIR/logs"
+  mkdir -p "$SCRIPT_DIR/backend/logs"
+  
+  # Start daemon if not running
+  if ! check_daemon; then
+    echo "📦 Starting daemon..."
+    nohup node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 &
+    sleep 2
+    
+    if ! check_daemon; then
+      echo "❌ Failed to start daemon"
+      exit 1
+    fi
+    
+    local pid=$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")
+    echo "✅ Daemon started (PID: $pid)"
+    echo "   URL: http://localhost:3737"
+    echo ""
+    sleep 1
+  else
+    local pid=$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")
+    echo "✅ Daemon is already running (PID: $pid)"
+    echo ""
+  fi
+  
+  # Follow logs
+  local log_file="$SCRIPT_DIR/logs/agent-webui-daemon.log"
+  if [ -f "$log_file" ]; then
+    echo "📋 Following logs (Ctrl+C to stop)..."
+    echo "   Log file: $log_file"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    tail -f "$log_file"
+  else
+    echo "ℹ️  Waiting for log file to be created..."
+    sleep 2
+    if [ -f "$log_file" ]; then
+      tail -f "$log_file"
+    else
+      echo "❌ Log file not found: $log_file"
+      exit 1
+    fi
   fi
 }
 
@@ -196,14 +251,22 @@ case "${1:-start}" in
   logs)
     view_logs
     ;;
+  log)
+    follow_logs
+    ;;
+  dev|foreground)
+    run_foreground
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|logs}"
+    echo "Usage: $0 {start|stop|restart|status|logs|log|dev}"
     echo ""
-    echo "  start   - Start the daemon (default)"
-    echo "  stop    - Stop the daemon"
-    echo "  restart - Restart the daemon (graceful)"
-    echo "  status  - Show daemon status"
-    echo "  logs    - View recent logs"
+    echo "  start      - Start the daemon (default, runs in background)"
+    echo "  stop       - Stop the daemon"
+    echo "  restart    - Restart the daemon (graceful)"
+    echo "  status     - Show daemon status"
+    echo "  logs       - View recent logs (last 50 lines)"
+    echo "  log        - Follow logs in real-time (Ctrl+C to stop)"
+    echo "  dev        - Run in foreground mode (see logs in terminal)"
     exit 1
     ;;
 esac
