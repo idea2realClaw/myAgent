@@ -375,14 +375,26 @@ JSON 格式：
    */
   async executeAll(decomposition, context, onChunk) {
     // Handle both formats: decomposition object or raw subtasks array
-    const subtasks = Array.isArray(decomposition) 
-      ? decomposition 
-      : (decomposition?.subtasks || []);
+    let subtasks = [];
     
-    if (!Array.isArray(subtasks) || subtasks.length === 0) {
+    if (Array.isArray(decomposition)) {
+      subtasks = decomposition;
+    } else if (decomposition && Array.isArray(decomposition.subtasks)) {
+      subtasks = decomposition.subtasks;
+    } else if (decomposition && decomposition.results) {
+      // Might be a results object, extract if possible
+      console.error('[executeAll] Received results object instead of decomposition');
+      return { success: false, results: [] };
+    } else {
+      console.error('[executeAll] Invalid input:', typeof decomposition, JSON.stringify(decomposition).slice(0, 200));
+      throw new Error('executeAll: Invalid decomposition input (expected array or { subtasks })');
+    }
+    
+    if (subtasks.length === 0) {
       throw new Error('executeAll: No subtasks to execute');
     }
     
+    console.log(`[executeAll] Executing ${subtasks.length} subtasks...`);
     const results = new Map();
     const completed = new Set();
     

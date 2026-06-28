@@ -841,10 +841,18 @@ async function handleChat(sessionId, session, msg) {
     });
 
     // Step 2: Execute subtasks (parallel where possible)
+    console.log(`[Server] Executing ${plan.subtasks?.length || 0} subtasks...`);
     const executionResult = await orchestrator.executeAll(plan, context, (taskId, chunk) => {
       // chunk events already sent via onProgress
     });
-    const results = executionResult.results || [];
+    
+    // Ensure results is always an array
+    const results = Array.isArray(executionResult?.results) ? executionResult.results : [];
+    console.log(`[Server] Execution completed, got ${results.length} results`);
+    
+    if (results.length === 0) {
+      console.warn('[Server] No results from executeAll, using fallback');
+    }
 
     // Step 3: Synthesize if multiple subtasks
     let finalAnswer;

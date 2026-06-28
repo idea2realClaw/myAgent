@@ -177,54 +177,28 @@ follow_logs() {
 # Function to run in foreground (development mode)
 run_foreground() {
   echo "🚀 Starting MyAgent in development mode..."
-  echo "   Logs will be displayed in this terminal"
-  echo "   Press Ctrl+C to stop following logs (server will keep running)"
+  echo "   Server logs will be displayed in this terminal"
+  echo "   Press Ctrl+C to stop the server"
   echo ""
   
   # Create required directories
-  mkdir -p "$SCRIPT_DIR/identity"
   mkdir -p "$SCRIPT_DIR/logs"
-  mkdir -p "$SCRIPT_DIR/backend/logs"
   
-  # Start daemon if not running
-  if ! check_daemon; then
-    echo "📦 Starting daemon..."
-    nohup node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 &
+  # Check if daemon is running
+  if check_daemon; then
+    echo "⚠️  Daemon is running. Stopping it first..."
+    stop_daemon
     sleep 2
-    
-    if ! check_daemon; then
-      echo "❌ Failed to start daemon"
-      exit 1
-    fi
-    
-    local pid=$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")
-    echo "✅ Daemon started (PID: $pid)"
-    echo "   URL: http://localhost:3737"
-    echo ""
-    sleep 1
-  else
-    local pid=$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")
-    echo "✅ Daemon is already running (PID: $pid)"
-    echo ""
   fi
   
-  # Follow logs
-  local log_file="$SCRIPT_DIR/logs/agent-webui-daemon.log"
-  if [ -f "$log_file" ]; then
-    echo "📋 Following logs (Ctrl+C to stop)..."
-    echo "   Log file: $log_file"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    tail -f "$log_file"
-  else
-    echo "ℹ️  Waiting for log file to be created..."
-    sleep 2
-    if [ -f "$log_file" ]; then
-      tail -f "$log_file"
-    else
-      echo "❌ Log file not found: $log_file"
-      exit 1
-    fi
-  fi
+  # Run server directly (foreground, logs to console and file)
+  echo "📋 Starting server in foreground..."
+  echo "   Log file: $SCRIPT_DIR/logs/agent-webui-server.log"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  
+  # Start server in foreground (output to both console and log file)
+  node "$SCRIPT_DIR/backend/server.js" 2>&1 | tee -a "$SCRIPT_DIR/logs/agent-webui-server.log"
 }
 
 # Parse command line arguments
