@@ -6,6 +6,7 @@ node_modules/
 config.json
 .DS_Store
 dist/
+!frontend/dist/
 !frontend/dist/index.html
 logs/
 .workbuddy/

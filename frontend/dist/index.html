@@ -236,27 +236,40 @@
       color: var(--accent2);
     }
 
-    /* ── Sliding panels ─────────────────────────────── */
-    .panels-container {
+    /* ── Panels: fixed on the RIGHT side, no sliding ──── */
+    #app {
       position: relative;
-      flex: 1;
+    }
+    #app > .panels-container {
+      position: absolute;
+      top: 56px;
+      left: 260px;
+      bottom: 0;
+      width: 420px;
+      z-index: 9999;
       overflow: hidden;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+      display: none;
+    }
+    #app > .panels-container.open {
+      display: block;
     }
     .slide-panel {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       background: var(--bg2);
-      transform: translateX(-100%);
-      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       display: flex;
       flex-direction: column;
-      z-index: 10;
     }
-    .slide-panel.open {
-      transform: translateX(0);
+    .slide-panel:not(.open) {
+      display: none;
+    }
+    }
+    .slide-panel:not(.open) {
+      display: none;
     }
     .panel-header {
       display: flex;
@@ -872,50 +885,6 @@
     font-size: 0.9375rem;
     color: var(--yellow);
   }
-  /* ── Panels: render inside main content area ─────────── */
-  /* Hide panels by default; JS toggles .open on the panel itself */
-  .panels-container {
-    display: none;          /* hidden unless a panel is open */
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-  }
-  #main.show-panel .panels-container {
-    display: flex;
-  }
-  #main.show-panel #messages,
-  #main.show-panel #input-area {
-    display: none;
-  }
-
-  .slide-panel {
-    display: none;           /* individual panel hidden by default */
-    width: 100%;
-    height: 100%;
-    overflow-y: auto;
-    flex-direction: column;
-    background: var(--bg2);
-    border-left: 1px solid var(--border);
-  }
-  .slide-panel.open {
-    display: flex;
-  }
-
-  .panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px; border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .panel-header h3 { font-size: 1rem; font-weight: 600; color: var(--accent2); }
-  .panel-close-btn {
-    background: none; border: 1px solid var(--border); border-radius: 6px;
-    color: var(--text2); cursor: pointer; font-size: 1rem;
-    width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-  }
-  .panel-close-btn:hover { color: var(--text); border-color: var(--accent); }
-  .panel-content { padding: 20px; flex: 1; overflow-y: auto; }
-
-  /* ── Original slide-panel CSS (keep for reference, overridden above) ── */
   </style>
 </head>
 <body>
@@ -976,10 +945,8 @@
     </div>
 
     <!-- Sliding panels container -->
+    
   </nav>
-
-  <!-- Main -->
-  <main id="main">
     <div class="panels-container">
       <!-- Skills panel -->
       <div class="slide-panel" id="panel-skills">
@@ -1155,6 +1122,10 @@
         </div>
       </div>
     </div>
+    
+
+  <!-- Main -->
+  <main id="main">
     <div id="messages">
       <div id="welcome">
         <div class="welcome-icon">🤖</div>
@@ -1195,6 +1166,7 @@
 
 <div id="toast"></div>
 
+<script>
 // ── WebSocket ───────────────────────────────────────────────
 let ws = null;
 let wsReady = false;
@@ -2960,12 +2932,14 @@ let currentOpenPanel = null;
 function togglePanel(name) {
   const panel = document.getElementById(`panel-${name}`);
   const btn = document.getElementById(`nav-btn-${name}`);
+  const container = document.querySelector('.panels-container');
   
   if (!panel) return;
   
   // If clicking the same panel that's open, close it
   if (currentOpenPanel === name) {
     closePanel(name);
+    if (container) container.classList.remove('open');
     return;
   }
   
@@ -2975,19 +2949,19 @@ function togglePanel(name) {
     const currentBtn = document.getElementById(`nav-btn-${currentOpenPanel}`);
     if (currentPanel) currentPanel.classList.remove('open');
     if (currentBtn) currentBtn.classList.remove('active');
-    document.getElementById('main').classList.remove('show-panel');
   }
   
   // Open new panel
   panel.classList.add('open');
   if (btn) btn.classList.add('active');
+  if (container) container.classList.add('open');
   currentOpenPanel = name;
-  document.getElementById('main').classList.add('show-panel');
 }
 
 function closePanel(name) {
   const panel = document.getElementById(`panel-${name}`);
   const btn = document.getElementById(`nav-btn-${name}`);
+  const container = document.querySelector('.panels-container');
   
   if (panel) panel.classList.remove('open');
   if (btn) btn.classList.remove('active');
@@ -2995,13 +2969,19 @@ function closePanel(name) {
   if (currentOpenPanel === name) {
     currentOpenPanel = null;
   }
-  document.getElementById('main').classList.remove('show-panel');
+
+  // If no panel is open, remove .open from container
+  if (!currentOpenPanel && container) {
+    container.classList.remove('open');
+  }
 }
 
 function closeAllPanels() {
   if (currentOpenPanel) {
     closePanel(currentOpenPanel);
   }
+  const container = document.querySelector('.panels-container');
+  if (container) container.classList.remove('open');
 }
 
 // ── Chat/Conversation Management ─────────────────────────
