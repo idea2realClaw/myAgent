@@ -1905,20 +1905,26 @@ function finalizeAssistantBubble() {
   }
 
   // Save assistant message to conversation
-  if (currentConversationId && conversations[currentConversationId]) {
-    const conv = conversations[currentConversationId];
+  // Use _currentStreamConversationId to ensure message is saved to the correct conversation
+  // even if user switches to another conversation while this one is still streaming
+  const targetConvId = _currentStreamConversationId || currentConversationId;
+  if (targetConvId && conversations[targetConvId]) {
+    const conv = conversations[targetConvId];
     if (!conv.messages) conv.messages = [];
     // Only add if the last message isn't already this one (avoid duplicates)
     const lastMsg = conv.messages[conv.messages.length - 1];
     if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content !== streamBuffer) {
-      conv.messages.push({ role: 'assistant', content: streamBuffer });
+      const model = document.getElementById('cfg-model').value;
+      conv.messages.push({ role: 'assistant', content: streamBuffer, model });
       conv.updatedAt = new Date().toISOString();
       saveConversationsToStorage();
       loadRecentChats();
+      console.log(`[Conversation] Saved assistant message to conversation: ${targetConvId}`);
     }
   }
 
   streamBuffer = '';
+  _currentStreamConversationId = null; // Reset after saving
 }
 
 function renderAssistantMessage(content) {
@@ -2134,6 +2140,9 @@ function sendMessage() {
   streamBuffer = '';
   streamEl = null;
   currentAssistantBubble = null;
+
+  // Record the conversation ID for this message (used in finalizeAssistantBubble)
+  _currentStreamConversationId = currentConversationId;
 
   // Toggle buttons: hide Send, show Stop
   document.getElementById('send-btn').style.display = 'none';
@@ -3045,6 +3054,7 @@ function closeAllPanels() {
 
 // ── Chat/Conversation Management ─────────────────────────
 let currentConversationId = null;
+let _currentStreamConversationId = null; // Track which conversation a streaming response belongs to
 let conversations = {};
 
 function showChat() {
