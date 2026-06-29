@@ -8,6 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import https from 'https';
+import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..', '..');
@@ -76,30 +78,73 @@ async function getTenantAccessToken() {
 
   const url = `${feishuConfig.domain}/open-apis/auth/v3/tenant_access_token/internal`;
   
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_id: feishuConfig.appId,
-        app_secret: feishuConfig.appSecret,
-      }),
+  const postData = JSON.stringify({
+    app_id: feishuConfig.appId,
+    app_secret: feishuConfig.appSecret,
+  });
+
+  const options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(postData),
+    },
+  };
+
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    
+    console.log('[Feishu] Calling API:', url);
+    
+    const req = protocol.request(url, options, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          console.log('[Feishu] Response:', result);
+          
+          if (result.code !== 0) {
+            reject(new Error(`Failed to get access token: ${result.msg || 'Unknown error'} (code: ${result.code})`));
+            return;
+          }
+          
+          tenantAccessToken = result.tenant_access_token;
+          tokenExpireTime = Date.now() + (result.expire - 300) * 1000; // 5 min buffer
+          
+          console.log('[Feishu] Tenant access token obtained');
+          resolve(tenantAccessToken);
+        } catch (err) {
+          reject(new Error(`Failed to parse response: ${err.message}`));
+        }
+      });
     });
-
-    const data = await resp.json();
     
-    if (!data.success) {
-      throw new Error(`Failed to get access token: ${data.msg}`);
-    }
-
-    tenantAccessToken = data.tenant_access_token;
-    tokenExpireTime = Date.now() + (data.expire - 300) * 1000; // 5 min buffer
+    req.on('error', (err) => {
+      console.error('[Feishu] Request failed:', err.message);
+      reject(err);
+    });
     
-    console.log('[Feishu] Tenant access token obtained');
-    return tenantAccessToken;
+    req.write(postData);
+    req.end();
+  });
+}
+
+// Test connection to Feishu API
+async function testConnection() {
+  // Clear cached token to force fresh test
+  tenantAccessToken = null;
+  tokenExpireTime = 0;
+  
+  try {
+    const token = await getTenantAccessToken();
+    return { success: true, message: '连接成功！' };
   } catch (err) {
-    console.error('[Feishu] Failed to get access token:', err.message);
-    throw err;
+    return { success: false, error: err.message };
   }
 }
 
@@ -217,17 +262,27 @@ function setMessageProcessor(processor) {
 
 // Handle webhook event
 async function handleWebhookEvent(event) {
+  console.log('[Feishu] ========== Handling Event ==========');
+  console.log('[Feishu] Event type:', event.header?.event_type);
+  console.log('[Feishu] Event data:', JSON.stringify(event, null, 2));
+  console.log('[Feishu] ========================================');
+  
   const { header, event: eventData } = event;
 
   // Verify token
   if (feishuConfig.verificationToken && header.token !== feishuConfig.verificationToken) {
     console.warn('[Feishu] Invalid verification token');
+    console.warn('[Feishu] Expected:', feishuConfig.verificationToken);
+    console.warn('[Feishu] Received:', header.token);
     return { error: 'Invalid token' };
   }
 
   // Handle message receive event
   if (header.event_type === 'im.message.receive_v1') {
+    console.log('[Feishu] Processing message receive event...');
     await handleMessageReceive(eventData);
+  } else {
+    console.log('[Feishu] Unhandled event type:', header.event_type);
   }
 
   return { success: true };
@@ -235,18 +290,31 @@ async function handleWebhookEvent(event) {
 
 // Handle message receive
 async function handleMessageReceive(event) {
+  console.log('[Feishu] ========== Received Message ==========');
+  console.log('[Feishu] Full event:', JSON.stringify(event, null, 2));
+  console.log('[Feishu] =======================================');
+  
   const senderOpenId = event.sender?.sender_id?.open_id;
   const messageId = event.message_id;
   const chatId = event.chat_id;
   const chatType = event.chat_type; // 'p2p' or 'group'
   const msgType = event.msg_type;
 
+  console.log(`[Feishu] senderOpenId: ${senderOpenId}`);
+  console.log(`[Feishu] messageId: ${messageId}`);
+  console.log(`[Feishu] chatId: ${chatId}`);
+  console.log(`[Feishu] chatType: ${chatType}`);
+  console.log(`[Feishu] msgType: ${msgType}`);
+  console.log(`[Feishu] content: ${event.content}`);
+
   let content = '';
   try {
     const parsed = JSON.parse(event.content || '{}');
     content = parsed.text || '';
+    console.log(`[Feishu] Parsed content: ${content}`);
   } catch {
     content = event.content || '';
+    console.log(`[Feishu] Raw content: ${content}`);
   }
 
   // Skip empty messages or messages from self
@@ -256,11 +324,13 @@ async function handleMessageReceive(event) {
   }
 
   console.log(`[Feishu] Message from ${senderOpenId} (${chatType}): ${content}`);
+  console.log(`[Feishu] messageProcessor exists: ${!!messageProcessor}`);
 
   // Step 1: Reply with "思考中..." (thinking)
   let thinkingMessageId = null;
   try {
     thinkingMessageId = await replyMessage(messageId, '思考中...');
+    console.log(`[Feishu] Sent thinking reply, messageId: ${thinkingMessageId}`);
   } catch (err) {
     console.error('[Feishu] Failed to send thinking reply:', err.message);
   }
@@ -268,6 +338,7 @@ async function handleMessageReceive(event) {
   // Step 2: Process the message through LLM
   if (messageProcessor) {
     try {
+      console.log(`[Feishu] Calling messageProcessor...`);
       const response = await messageProcessor(content, {
         channel: 'feishu',
         senderOpenId,
@@ -275,6 +346,7 @@ async function handleMessageReceive(event) {
         chatId,
         chatType,
       });
+      console.log(`[Feishu] messageProcessor response: ${response}`);
 
       // Step 3: Update the "思考中..." message with the actual response
       if (thinkingMessageId && response) {
@@ -289,6 +361,7 @@ async function handleMessageReceive(event) {
       }
     } catch (err) {
       console.error('[Feishu] Failed to process message:', err.message);
+      console.error('[Feishu] Error stack:', err.stack);
       
       // Update thinking message with error
       if (thinkingMessageId) {
@@ -317,13 +390,19 @@ function createWebhookMiddleware() {
   return async (req, res) => {
     try {
       const event = req.body;
-
+      
+      // Log raw request for debugging
+      console.log('[Feishu] ========== Webhook Received ==========');
+      console.log('[Feishu] Headers:', JSON.stringify(req.headers, null, 2));
+      console.log('[Feishu] Raw body:', JSON.stringify(event, null, 2));
+      console.log('[Feishu] ========================================');
+      
       // Handle URL verification challenge
       if (event.type === 'url_verification') {
         console.log('[Feishu] URL verification challenge');
         return res.json({ challenge: event.challenge });
       }
-
+      
       // Verify signature (if encrypt key is set)
       const signature = req.headers['x-lark-signature'] || req.headers['X-Lark-Signature'];
       const timestamp = req.headers['x-lark-request-timestamp'] || req.headers['X-Lark-Request-Timestamp'];
@@ -334,16 +413,18 @@ function createWebhookMiddleware() {
           return res.status(403).json({ error: 'Invalid signature' });
         }
       }
-
+      
       // Handle the event (async, don't wait)
       handleWebhookEvent(event).catch(err => {
         console.error('[Feishu] Event handling error:', err.message);
+        console.error('[Feishu] Error stack:', err.stack);
       });
-
+      
       // Respond within 3 seconds (required by Feishu)
       res.json({ success: true });
     } catch (err) {
       console.error('[Feishu] Webhook error:', err.message);
+      console.error('[Feishu] Error stack:', err.stack);
       res.status(500).json({ error: err.message });
     }
   };
@@ -379,5 +460,6 @@ export {
   createWebhookMiddleware,
   handleWebhookEvent,
   getStatus,
+  testConnection,
   feishuConfig,
 };
