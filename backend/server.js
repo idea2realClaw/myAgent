@@ -21,7 +21,7 @@ import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHE
 import { SnapshotManager } from './snapshot-manager.js';
 import { PermissionManager } from './permission-manager.js';
 import { AgentsMdLoader } from './agents-md-loader.js';
-import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus, testConnection as testFeishuConnection } from './channels/feishu.js';
+import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, setBroadcaster, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus, testConnection as testFeishuConnection } from './channels/feishu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -197,6 +197,22 @@ function broadcast(ws, data) {
     ws.send(JSON.stringify(data));
   }
 }
+
+// Set up Feishu log broadcaster — sends Feishu logs to all WebSocket clients
+setBroadcaster((level, message, data) => {
+  const logMsg = JSON.stringify({
+    type: 'log',
+    level,
+    message,
+    data,
+    timestamp: new Date().toISOString(),
+  });
+  wss.clients.forEach(ws => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(logMsg);
+    }
+  });
+});
 
 /**
  * Build system prompt (parameterized by provider)

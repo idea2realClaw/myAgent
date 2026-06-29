@@ -16,6 +16,28 @@ const ROOT_DIR = path.join(__dirname, '..', '..');
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 
 // ============================================================
+// Broadcaster for sending logs to WebSocket clients
+// ============================================================
+
+let logBroadcaster = null;
+
+export function setBroadcaster(fn) {
+  logBroadcaster = fn;
+}
+
+// Helper: send log to frontend via broadcaster
+function feishuLog(level, message, data = null) {
+  console.log(`[Feishu] ${message}`, data || '');
+  if (logBroadcaster) {
+    try {
+      logBroadcaster(level, `[Feishu] ${message}`, data);
+    } catch (err) {
+      console.error('[Feishu] Failed to broadcast log:', err.message);
+    }
+  }
+}
+
+// ============================================================
 // Configuration
 // ============================================================
 
@@ -391,15 +413,14 @@ function createWebhookMiddleware() {
     try {
       const event = req.body;
       
-      // Log raw request for debugging
-      console.log('[Feishu] ========== Webhook Received ==========');
-      console.log('[Feishu] Headers:', JSON.stringify(req.headers, null, 2));
-      console.log('[Feishu] Raw body:', JSON.stringify(event, null, 2));
-      console.log('[Feishu] ========================================');
+      // Log raw request for debugging - send to frontend too
+      feishuLog('info', '========== Webhook Received ==========');
+      feishuLog('info', 'Webhook headers', { hasHeaders: !!req.headers, eventType: event.type });
+      feishuLog('info', 'Webhook body received', { eventType: event.type, hasEvent: !!event });
       
       // Handle URL verification challenge
       if (event.type === 'url_verification') {
-        console.log('[Feishu] URL verification challenge');
+        feishuLog('info', 'URL verification challenge received');
         return res.json({ challenge: event.challenge });
       }
       
