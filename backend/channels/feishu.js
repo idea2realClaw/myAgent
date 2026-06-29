@@ -8,6 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import https from 'https';
+import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..', '..');
@@ -76,31 +78,60 @@ async function getTenantAccessToken() {
 
   const url = `${feishuConfig.domain}/open-apis/auth/v3/tenant_access_token/internal`;
   
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_id: feishuConfig.appId,
-        app_secret: feishuConfig.appSecret,
-      }),
+  const postData = JSON.stringify({
+    app_id: feishuConfig.appId,
+    app_secret: feishuConfig.appSecret,
+  });
+
+  const options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(postData),
+    },
+  };
+
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    
+    console.log('[Feishu] Calling API:', url);
+    
+    const req = protocol.request(url, options, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          console.log('[Feishu] Response:', result);
+          
+          if (result.code !== 0) {
+            reject(new Error(`Failed to get access token: ${result.msg || 'Unknown error'} (code: ${result.code})`));
+            return;
+          }
+          
+          tenantAccessToken = result.tenant_access_token;
+          tokenExpireTime = Date.now() + (result.expire - 300) * 1000; // 5 min buffer
+          
+          console.log('[Feishu] Tenant access token obtained');
+          resolve(tenantAccessToken);
+        } catch (err) {
+          reject(new Error(`Failed to parse response: ${err.message}`));
+        }
+      });
     });
-
-    const data = await resp.json();
     
-    if (!data.success) {
-      throw new Error(`Failed to get access token: ${data.msg}`);
-    }
-
-    tenantAccessToken = data.tenant_access_token;
-    tokenExpireTime = Date.now() + (data.expire - 300) * 1000; // 5 min buffer
+    req.on('error', (err) => {
+      console.error('[Feishu] Request failed:', err.message);
+      reject(err);
+    });
     
-    console.log('[Feishu] Tenant access token obtained');
-    return tenantAccessToken;
-  } catch (err) {
-    console.error('[Feishu] Failed to get access token:', err.message);
-    throw err;
-  }
+    req.write(postData);
+    req.end();
+  });
 }
 
 // Test connection to Feishu API
