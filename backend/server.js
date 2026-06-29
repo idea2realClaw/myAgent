@@ -21,7 +21,7 @@ import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHE
 import { SnapshotManager } from './snapshot-manager.js';
 import { PermissionManager } from './permission-manager.js';
 import { AgentsMdLoader } from './agents-md-loader.js';
-import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus } from './channels/feishu.js';
+import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuConfig, sendMessage as sendFeishuMessage, replyMessage as replyFeishuMessage, updateMessage as updateFeishuMessage, setMessageProcessor, createWebhookMiddleware, handleWebhookEvent, getStatus as getFeishuStatus, testConnection as testFeishuConnection } from './channels/feishu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
@@ -482,6 +482,7 @@ app.get('/api/channels/feishu/config', (req, res) => {
     enabled: feishuConfig.enabled,
     appId: feishuConfig.appId || '',  // Don't mask App ID (not a secret)
     hasAppSecret: !!feishuConfig.appSecret,
+    hasCredentials: !!(feishuConfig.appId && feishuConfig.appSecret),  // Add hasCredentials for frontend
     verificationToken: feishuConfig.verificationToken || '',  // Don't mask (not a secret)
     hasEncryptKey: !!feishuConfig.encryptKey,
     domain: feishuConfig.domain,
@@ -509,6 +510,16 @@ app.post('/api/channels/feishu/config', async (req, res) => {
   }
   
   res.json({ success: true, status: getFeishuStatus() });
+});
+
+// Test Feishu connection
+app.post('/api/channels/feishu/test', async (req, res) => {
+  try {
+    const result = await testFeishuConnection();
+    res.json(result);
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
 });
 
 // ============================================================

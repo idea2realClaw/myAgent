@@ -103,6 +103,20 @@ async function getTenantAccessToken() {
   }
 }
 
+// Test connection to Feishu API
+async function testConnection() {
+  // Clear cached token to force fresh test
+  tenantAccessToken = null;
+  tokenExpireTime = 0;
+  
+  try {
+    const token = await getTenantAccessToken();
+    return { success: true, message: '连接成功！' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 // ============================================================
 // Feishu API Helper
 // ============================================================
@@ -379,5 +393,6 @@ export {
   createWebhookMiddleware,
   handleWebhookEvent,
   getStatus,
+  testConnection,
   feishuConfig,
 };

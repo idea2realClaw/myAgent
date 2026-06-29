@@ -2523,18 +2523,13 @@ function saveFeishuConfig() {
 function testFeishuConnection() {
   showToast('正在测试飞书连接...', 'info');
   
-  fetch('/api/channels/feishu/config').then(r => r.json()).then(cfg => {
-    if (!cfg.enabled) {
-      showToast('飞书频道未启用', 'warn');
-      return;
+  // Call backend test endpoint to actually test the connection
+  fetch('/api/channels/feishu/test', { method: 'POST' }).then(r => r.json()).then(result => {
+    if (result.success) {
+      showToast('飞书连接测试成功！', 'success');
+    } else {
+      showToast('飞书连接测试失败: ' + (result.error || '未知错误'), 'error');
     }
-    if (!cfg.hasCredentials) {
-      showToast('请先配置 App ID 和 App Secret', 'warn');
-      return;
-    }
-    
-    // Test by calling a simple API (get bot info)
-    showToast('飞书配置有效！', 'success');
   }).catch(err => {
     showToast('连接测试失败: ' + err.message, 'error');
   });
