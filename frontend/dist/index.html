@@ -1902,8 +1902,23 @@ function finalizeAssistantBubble() {
     streamEl.innerHTML = marked.parse(streamBuffer);
     streamEl.id = '';
     streamEl = null;
-    streamBuffer = '';
   }
+
+  // Save assistant message to conversation
+  if (currentConversationId && conversations[currentConversationId]) {
+    const conv = conversations[currentConversationId];
+    if (!conv.messages) conv.messages = [];
+    // Only add if the last message isn't already this one (avoid duplicates)
+    const lastMsg = conv.messages[conv.messages.length - 1];
+    if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content !== streamBuffer) {
+      conv.messages.push({ role: 'assistant', content: streamBuffer });
+      conv.updatedAt = new Date().toISOString();
+      saveConversationsToStorage();
+      loadRecentChats();
+    }
+  }
+
+  streamBuffer = '';
 }
 
 function renderAssistantMessage(content) {
@@ -1933,6 +1948,35 @@ function renderErrorMessage(msg) {
   scrollToBottom();
 }
 
+// Render a saved message without saving to conversation (used when loading history)
+function appendMessage(role, content) {
+  if (role === 'user') {
+    const container = document.getElementById('messages');
+    const el = document.createElement('div');
+    el.className = 'message user';
+    el.innerHTML = `
+      <div class="avatar">You</div>
+      <div class="bubble">${escapeHtml(content)}</div>
+    `;
+    container.appendChild(el);
+    scrollToBottom();
+  } else if (role === 'assistant') {
+    const container = document.getElementById('messages');
+    const el = document.createElement('div');
+    el.className = 'message assistant';
+    const badgeHtml = _currentModelAlias ? `<div class="model-badge">${_currentModelAlias}</div>` : '';
+    el.innerHTML = `
+      <div class="avatar">AI</div>
+      <div class="bubble">
+        ${badgeHtml}
+        <div class="md-content">${marked.parse(content)}</div>
+      </div>
+    `;
+    container.appendChild(el);
+    scrollToBottom();
+  }
+}
+
 function renderUserMessage(text) {
   hideWelcome();
   const container = document.getElementById('messages');
@@ -1944,6 +1988,21 @@ function renderUserMessage(text) {
   `;
   container.appendChild(el);
   scrollToBottom();
+
+  // Save user message to conversation
+  if (currentConversationId && conversations[currentConversationId]) {
+    const conv = conversations[currentConversationId];
+    if (!conv.messages) conv.messages = [];
+    conv.messages.push({ role: 'user', content: text });
+    conv.updatedAt = new Date().toISOString();
+
+    // Update title if this is the first message (title is "New Conversation")
+    if (conv.title === 'New Conversation' && text) {
+      conv.title = text.substring(0, 50) + (text.length > 50 ? '...' : '');
+      saveConversationsToStorage();
+      loadRecentChats();
+    }
+  }
 }
 
 function scrollToBottom() {
@@ -3022,7 +3081,7 @@ function selectChat(chatId) {
       hideWelcome();
       // Render messages
       conv.messages.forEach(msg => {
-        appendMessage(msg.role, msg.content, msg.model);
+        appendMessage(msg.role, msg.content);
       });
     } else {
       showWelcome();
@@ -3067,29 +3126,9 @@ function saveCurrentConversation() {
   if (!currentConversationId || !conversations[currentConversationId]) return;
   
   const conv = conversations[currentConversationId];
-  const messages = document.getElementById('messages');
-  if (!messages) return;
-  
-  // Collect messages from DOM
-  const messageElements = messages.querySelectorAll('.msg');
-  const msgArray = [];
-  messageElements.forEach(el => {
-    const role = el.classList.contains('user') ? 'user' : 'assistant';
-    const content = el.querySelector('.msg-content')?.innerText || '';
-    if (content) {
-      msgArray.push({ role, content });
-    }
-  });
-  
-  conv.messages = msgArray;
+  // Messages are now saved when rendered (in renderUserMessage and finalizeAssistantBubble)
+  // Just update the timestamp and save to storage
   conv.updatedAt = new Date().toISOString();
-  
-  // Update title from first message
-  if (msgArray.length > 0 && conv.title === 'New Conversation') {
-    const firstMsg = msgArray[0].content;
-    conv.title = firstMsg.substring(0, 50) + (firstMsg.length > 50 ? '...' : '');
-  }
-  
   saveConversationsToStorage();
 }
 
