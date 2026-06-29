@@ -2999,35 +2999,6 @@ function showChat() {
   if (input) input.focus();
 }
 
-function newConversation() {
-  // Generate new conversation ID
-  const convId = 'conv-' + Date.now();
-  const conv = {
-    id: convId,
-    title: 'New Conversation',
-    messages: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  
-  // Save to conversations
-  conversations[convId] = conv;
-  saveConversationsToStorage();
-  
-  // Switch to this conversation
-  selectChat(convId);
-  
-  // Clear messages display
-  const messages = document.getElementById('messages');
-  if (messages) {
-    messages.innerHTML = '';
-    showWelcome();
-  }
-  
-  // Update recent chats list
-  loadRecentChats();
-}
-
 function selectChat(chatId) {
   // Save current conversation first
   if (currentConversationId && conversations[currentConversationId]) {
@@ -3286,7 +3257,32 @@ function ensureConversation(firstMessage) {
 }
 
 function newConversation() {
-  ensureConversation();
+  // Generate new conversation ID
+  const convId = 'conv-' + Date.now();
+  const conv = {
+    id: convId,
+    title: 'New Conversation',
+    messages: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  
+  // Save to conversations
+  conversations[convId] = conv;
+  saveConversationsToStorage();
+  
+  // Switch to this conversation
+  selectChat(convId);
+  
+  // Clear messages display
+  const messages = document.getElementById('messages');
+  if (messages) {
+    messages.innerHTML = '';
+    showWelcome();
+  }
+  
+  // Update recent chats list
+  loadRecentChats();
 }
 
 // Modify sendMessage to save conversation
