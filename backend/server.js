@@ -30,6 +30,29 @@ const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');
 
+// ============================================================
+// Logging to file (in addition to console)
+// ============================================================
+const logFile = fs.createWriteStream(path.join(LOGS_DIR, 'myagent.log'), { flags: 'a' });
+const logFileError = fs.createWriteStream(path.join(LOGS_DIR, 'myagent-error.log'), { flags: 'a' });
+
+function logToFile(level, ...args) {
+  const timestamp = new Date().toISOString();
+  const message = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  const line = `[${timestamp}] [${level}] ${message}\n`;
+  logFile.write(line);
+  if (level === 'error') logFileError.write(line);
+}
+
+// Override console methods to also write to file
+const origLog = console.log;
+const origWarn = console.warn;
+const origError = console.error;
+
+console.log = (...args) => { origLog(...args); logToFile('info', ...args); };
+console.warn = (...args) => { origWarn(...args); logToFile('warn', ...args); };
+console.error = (...args) => { origError(...args); logToFile('error', ...args); };
+
 // Create required directories on startup
 [IDENTITY_DIR, LOGS_DIR, path.join(ROOT_DIR, 'backend', 'logs')].forEach(dir => {
   if (!fs.existsSync(dir)) {
