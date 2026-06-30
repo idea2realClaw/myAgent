@@ -23,16 +23,20 @@ let logBroadcaster = null;
 
 export function setBroadcaster(fn) {
   logBroadcaster = fn;
+  console.log('[Feishu] ✅ Broadcaster set successfully');
+  if (logBroadcaster) {
+    logBroadcaster('info', '[Feishu] ✅ 飞书日志广播器已启用，日志将实时显示到前端');
+  }
 }
 
 // Helper: send log to frontend via broadcaster
 function feishuLog(level, message, data = null) {
-  console.log(`[Feishu] ${message}`, data || '');
+  feishuLog('info', `[Feishu] ${message}`, data || '');
   if (logBroadcaster) {
     try {
       logBroadcaster(level, `[Feishu] ${message}`, data);
     } catch (err) {
-      console.error('[Feishu] Failed to broadcast log:', err.message);
+      feishuLog('error', '[Feishu] Failed to broadcast log:', err.message);
     }
   }
 }
@@ -64,7 +68,7 @@ function loadConfig() {
       }
     }
   } catch (err) {
-    console.error('[Feishu] Failed to load config:', err.message);
+    feishuLog('error', '[Feishu] Failed to load config:', err.message);
   }
   return feishuConfig;
 }
@@ -78,9 +82,9 @@ function saveConfig(config) {
     fullConfig.feishu = { ...feishuConfig, ...config };
     feishuConfig = fullConfig.feishu;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(fullConfig, null, 2));
-    console.log('[Feishu] Config saved');
+    feishuLog('info', '[Feishu] Config saved');
   } catch (err) {
-    console.error('[Feishu] Failed to save config:', err.message);
+    feishuLog('error', '[Feishu] Failed to save config:', err.message);
   }
 }
 
@@ -90,11 +94,12 @@ function saveConfig(config) {
 
 async function getTenantAccessToken() {
   if (tenantAccessToken && Date.now() < tokenExpireTime) {
+    feishuLog('debug', '使用缓存的 tenant access token');
     return tenantAccessToken;
   }
 
   if (!feishuConfig.appId || !feishuConfig.appSecret) {
-    console.error('[Feishu] Missing credentials:', { appId: feishuConfig.appId, hasSecret: !!feishuConfig.appSecret });
+    feishuLog('error', '缺少飞书凭据', { appId: feishuConfig.appId, hasSecret: !!feishuConfig.appSecret });
     throw new Error('Feishu appId and appSecret not configured');
   }
 
@@ -116,7 +121,7 @@ async function getTenantAccessToken() {
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     
-    console.log('[Feishu] Calling API:', url);
+    feishuLog('info', '📤 发送请求: 获取 Tenant Access Token', { url });
     
     const req = protocol.request(url, options, (res) => {
       let data = '';
@@ -128,9 +133,10 @@ async function getTenantAccessToken() {
       res.on('end', () => {
         try {
           const result = JSON.parse(data);
-          console.log('[Feishu] Response:', result);
+          feishuLog('info', '📥 收到响应: 获取 Tenant Access Token', { code: result.code, msg: result.msg, hasToken: !!result.tenant_access_token });
           
           if (result.code !== 0) {
+            feishuLog('error', '获取 access token 失败', { code: result.code, msg: result.msg });
             reject(new Error(`Failed to get access token: ${result.msg || 'Unknown error'} (code: ${result.code})`));
             return;
           }
@@ -138,16 +144,17 @@ async function getTenantAccessToken() {
           tenantAccessToken = result.tenant_access_token;
           tokenExpireTime = Date.now() + (result.expire - 300) * 1000; // 5 min buffer
           
-          console.log('[Feishu] Tenant access token obtained');
+          feishuLog('info', '✅ Tenant access token 获取成功');
           resolve(tenantAccessToken);
         } catch (err) {
+          feishuLog('error', '解析响应失败', { error: err.message });
           reject(new Error(`Failed to parse response: ${err.message}`));
         }
       });
     });
     
     req.on('error', (err) => {
-      console.error('[Feishu] Request failed:', err.message);
+      feishuLog('error', '请求失败', { error: err.message });
       reject(err);
     });
     
@@ -178,6 +185,8 @@ async function feishuApi(path, method = 'POST', body = null) {
   const token = await getTenantAccessToken();
   
   const url = `${feishuConfig.domain}${path}`;
+  feishuLog('debug', `📤 Feishu API 请求`, { method, url, body: body ? JSON.stringify(body).substring(0, 200) : null });
+  
   const options = {
     method,
     headers: {
@@ -193,10 +202,12 @@ async function feishuApi(path, method = 'POST', body = null) {
   const resp = await fetch(url, options);
   const data = await resp.json();
   
+  feishuLog('debug', `📥 Feishu API 响应`, { path, code: data.code, msg: data.msg });
+  
   if (!data.success) {
     throw new Error(`Feishu API error: ${data.msg} (code: ${data.code})`);
   }
-
+  
   return data;
 }
 
@@ -216,11 +227,12 @@ async function sendMessage(chatId, text, replyMessageId = null) {
   }
 
   try {
+    feishuLog('info', '📤 发送请求: 发送消息', { chatId, text: text.substring(0, 100), hasReplyId: !!replyMessageId });
     const data = await feishuApi('/open-apis/im/v1/messages?receive_id_type=chat_id', 'POST', body);
-    console.log(`[Feishu] Message sent: ${data.data?.message_id}`);
+    feishuLog('info', '📥 收到响应: 发送消息', { messageId: data.data?.message_id, code: data.code, msg: data.msg });
     return data.data?.message_id;
   } catch (err) {
-    console.error('[Feishu] Failed to send message:', err.message);
+    feishuLog('error', '发送消息失败', { error: err.message });
     throw err;
   }
 }
@@ -231,14 +243,15 @@ async function sendMessage(chatId, text, replyMessageId = null) {
 
 async function replyMessage(messageId, text) {
   try {
+    feishuLog('info', '📤 发送请求: 回复消息', { messageId, text });
     const data = await feishuApi(`/open-apis/im/v1/messages/${messageId}/reply`, 'POST', {
       content: JSON.stringify({ text }),
       msg_type: 'text',
     });
-    console.log(`[Feishu] Reply sent: ${data.data?.message_id}`);
+    feishuLog('info', '📥 收到响应: 回复消息', { messageId: data.data?.message_id, code: data.code, msg: data.msg });
     return data.data?.message_id;
   } catch (err) {
-    console.error('[Feishu] Failed to reply:', err.message);
+    feishuLog('error', '回复消息失败', { error: err.message });
     throw err;
   }
 }
@@ -249,13 +262,14 @@ async function replyMessage(messageId, text) {
 
 async function updateMessage(messageId, text) {
   try {
+    feishuLog('info', '📤 发送请求: 更新消息', { messageId, text: text.substring(0, 100) });
     const data = await feishuApi(`/open-apis/im/v1/messages/${messageId}`, 'PATCH', {
       content: JSON.stringify({ text }),
     });
-    console.log(`[Feishu] Message updated: ${messageId}`);
+    feishuLog('info', '📥 收到响应: 更新消息', { messageId, code: data.code, msg: data.msg });
     return true;
   } catch (err) {
-    console.error('[Feishu] Failed to update message:', err.message);
+    feishuLog('error', '更新消息失败', { error: err.message });
     throw err;
   }
 }
@@ -284,27 +298,27 @@ function setMessageProcessor(processor) {
 
 // Handle webhook event
 async function handleWebhookEvent(event) {
-  console.log('[Feishu] ========== Handling Event ==========');
-  console.log('[Feishu] Event type:', event.header?.event_type);
-  console.log('[Feishu] Event data:', JSON.stringify(event, null, 2));
-  console.log('[Feishu] ========================================');
+  feishuLog('info', '========== Handling Event ==========');
+  feishuLog('info', `Event type: ${event.header?.event_type}`);
+  feishuLog('info', 'Event data received', { eventType: event.header?.event_type });
+  feishuLog('info', '========== Handling Event ==========');
   
   const { header, event: eventData } = event;
 
   // Verify token
   if (feishuConfig.verificationToken && header.token !== feishuConfig.verificationToken) {
-    console.warn('[Feishu] Invalid verification token');
-    console.warn('[Feishu] Expected:', feishuConfig.verificationToken);
-    console.warn('[Feishu] Received:', header.token);
+    feishuLog('warn', 'Invalid verification token');
+    feishuLog('warn', `Expected token: ${feishuConfig.verificationToken}`);
+    feishuLog('warn', `Received token: ${header.token}`);
     return { error: 'Invalid token' };
   }
 
   // Handle message receive event
   if (header.event_type === 'im.message.receive_v1') {
-    console.log('[Feishu] Processing message receive event...');
+    feishuLog('info', 'Processing message receive event...');
     await handleMessageReceive(eventData);
   } else {
-    console.log('[Feishu] Unhandled event type:', header.event_type);
+    feishuLog('info', `Unhandled event type: ${header.event_type}`);
   }
 
   return { success: true };
@@ -312,9 +326,8 @@ async function handleWebhookEvent(event) {
 
 // Handle message receive
 async function handleMessageReceive(event) {
-  console.log('[Feishu] ========== Received Message ==========');
-  console.log('[Feishu] Full event:', JSON.stringify(event, null, 2));
-  console.log('[Feishu] =======================================');
+  feishuLog('info', '========== Received Message ==========');
+  feishuLog('info', 'Full event data', { event: JSON.stringify(event) });
   
   const senderOpenId = event.sender?.sender_id?.open_id;
   const messageId = event.message_id;
@@ -322,45 +335,41 @@ async function handleMessageReceive(event) {
   const chatType = event.chat_type; // 'p2p' or 'group'
   const msgType = event.msg_type;
 
-  console.log(`[Feishu] senderOpenId: ${senderOpenId}`);
-  console.log(`[Feishu] messageId: ${messageId}`);
-  console.log(`[Feishu] chatId: ${chatId}`);
-  console.log(`[Feishu] chatType: ${chatType}`);
-  console.log(`[Feishu] msgType: ${msgType}`);
-  console.log(`[Feishu] content: ${event.content}`);
+  feishuLog('info', `Message metadata`, { senderOpenId, messageId, chatId, chatType, msgType });
+  feishuLog('info', `Raw content`, { content: event.content });
 
   let content = '';
   try {
     const parsed = JSON.parse(event.content || '{}');
     content = parsed.text || '';
-    console.log(`[Feishu] Parsed content: ${content}`);
+    feishuLog('info', `Parsed content: ${content}`);
   } catch {
     content = event.content || '';
-    console.log(`[Feishu] Raw content: ${content}`);
+    feishuLog('info', `Raw content (parse failed): ${content}`);
   }
 
   // Skip empty messages or messages from self
   if (!content.trim()) {
-    console.log('[Feishu] Empty message, skipping');
+    feishuLog('warn', 'Empty message, skipping');
     return;
   }
 
-  console.log(`[Feishu] Message from ${senderOpenId} (${chatType}): ${content}`);
-  console.log(`[Feishu] messageProcessor exists: ${!!messageProcessor}`);
+  feishuLog('info', `💬 Message from ${senderOpenId} (${chatType}): "${content}"`);
+  feishuLog('info', `messageProcessor exists: ${!!messageProcessor}`);
 
   // Step 1: Reply with "思考中..." (thinking)
   let thinkingMessageId = null;
   try {
     thinkingMessageId = await replyMessage(messageId, '思考中...');
-    console.log(`[Feishu] Sent thinking reply, messageId: ${thinkingMessageId}`);
+    feishuLog('info', `✅ Sent thinking reply`, { thinkingMessageId });
   } catch (err) {
-    console.error('[Feishu] Failed to send thinking reply:', err.message);
+    feishuLog('error', `Failed to send thinking reply`, { error: err.message });
   }
 
   // Step 2: Process the message through LLM
   if (messageProcessor) {
     try {
-      console.log(`[Feishu] Calling messageProcessor...`);
+      feishuLog('info', `🤖 Calling messageProcessor...`);
       const response = await messageProcessor(content, {
         channel: 'feishu',
         senderOpenId,
@@ -368,22 +377,21 @@ async function handleMessageReceive(event) {
         chatId,
         chatType,
       });
-      console.log(`[Feishu] messageProcessor response: ${response}`);
+      feishuLog('info', `✅ messageProcessor response received`, { responseLength: response?.length });
 
       // Step 3: Update the "思考中..." message with the actual response
       if (thinkingMessageId && response) {
         try {
           await updateMessage(thinkingMessageId, response);
-          console.log('[Feishu] Updated thinking message with response');
+          feishuLog('info', `✅ Updated thinking message with response`);
         } catch (err) {
-          console.error('[Feishu] Failed to update thinking message:', err.message);
+          feishuLog('error', `Failed to update thinking message`, { error: err.message });
           // Fallback: send a new message
           await sendMessage(chatId, response);
         }
       }
     } catch (err) {
-      console.error('[Feishu] Failed to process message:', err.message);
-      console.error('[Feishu] Error stack:', err.stack);
+      feishuLog('error', `Failed to process message`, { error: err.message, stack: err.stack });
       
       // Update thinking message with error
       if (thinkingMessageId) {
@@ -393,7 +401,7 @@ async function handleMessageReceive(event) {
       }
     }
   } else {
-    console.warn('[Feishu] No message processor set');
+    feishuLog('warn', `No message processor set`);
     
     // Update thinking message with warning
     if (thinkingMessageId) {
@@ -430,22 +438,22 @@ function createWebhookMiddleware() {
       
       if (signature && feishuConfig.encryptKey) {
         if (!verifySignature(timestamp, event, signature)) {
-          console.warn('[Feishu] Invalid webhook signature');
+          feishuLog('warn', 'Invalid webhook signature');
           return res.status(403).json({ error: 'Invalid signature' });
         }
       }
       
       // Handle the event (async, don't wait)
       handleWebhookEvent(event).catch(err => {
-        console.error('[Feishu] Event handling error:', err.message);
-        console.error('[Feishu] Error stack:', err.stack);
+        feishuLog('error', `Event handling error: ${err.message}`);
+        feishuLog('error', `Error stack`, { stack: err.stack });
       });
       
       // Respond within 3 seconds (required by Feishu)
       res.json({ success: true });
     } catch (err) {
-      console.error('[Feishu] Webhook error:', err.message);
-      console.error('[Feishu] Error stack:', err.stack);
+      feishuLog('error', `Webhook error: ${err.message}`);
+      feishuLog('error', `Error stack`, { stack: err.stack });
       res.status(500).json({ error: err.message });
     }
   };
