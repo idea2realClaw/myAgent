@@ -135,6 +135,19 @@ Rules:
             args: subtask.args || {},
             depends_on: subtask.depends_on || [],
           }));
+          
+          // 自动追加最终总结子任务（depends on all other subtasks）
+          const allIds = validatedSubtasks.map(s => s.id);
+          validatedSubtasks.push({
+            id: 'task-summary',
+            title: '最后总结',
+            purpose: '汇总所有子任务结果，用自然语言生成最终答案',
+            tool: 'llm_reason',
+            args: {
+              prompt: `请基于前面所有任务的结果，用自然语言为用户提供最终答案。要求：\n1. 用 markdown 格式整理（标题、列表、代码块等）\n2. 禁止输出原始 JSON 数据\n3. 清晰易读，直接面向用户\n4. 如果结果有截断或不完整，请说明并提供建议`
+            },
+            depends_on: allIds,
+          });
 
           return {
             title: args.title || userRequest.slice(0, 60),
@@ -154,6 +167,7 @@ Rules:
    * Decompose using prompt-based approach (fallback)
    */
   async _decomposeWithPrompt(userRequest, systemContext) {
+    let decomposition;  // 在循环外声明，以便 break 后仍可访问
     // 尝试最多 2 次分解（如果第一次 JSON 解析失败，重试）
     for (let attempt = 1; attempt <= 2; attempt++) {
       const messages = [
@@ -172,7 +186,6 @@ Rules:
         console.log(`[TaskOrchestrator] LLM raw response (first 500 chars): ${JSON.stringify(llmResponse?.slice(0, 500))}`);
 
         // 健壮的 JSON 提取
-        let decomposition;
         try {
           let jsonStr = llmResponse.trim();
 
@@ -256,6 +269,19 @@ Rules:
       return this._createFallbackDecomposition(userRequest);
     }
 
+    // 自动追加最终总结子任务（depends on all other subtasks）
+    const allIds = validatedSubtasks.map(s => s.id);
+    validatedSubtasks.push({
+      id: 'task-summary',
+      title: '最后总结',
+      purpose: '汇总所有子任务结果，用自然语言生成最终答案',
+      tool: 'llm_reason',
+      args: {
+        prompt: `请基于前面所有任务的结果，用自然语言为用户提供最终答案。要求：\n1. 用 markdown 格式整理（标题、列表、代码块等）\n2. 禁止输出原始 JSON 数据\n3. 清晰易读，直接面向用户\n4. 如果结果有截断或不完整，请说明并提供建议`
+      },
+      depends_on: allIds,
+    });
+
     return {
       title: decomposition.title || userRequest.slice(0, 60),
       subtasks: validatedSubtasks,
@@ -283,11 +309,13 @@ Rules:
             depends_on: [],
           },
           {
-            id: 'task-2',
-            title: '分析内容',
-            purpose: '基于文件列表回答问题',
+            id: 'task-summary',
+            title: '最后总结',
+            purpose: '汇总所有子任务结果，用自然语言生成最终答案',
             tool: 'llm_reason',
-            args: { prompt: `用户请求: ${userRequest}\n\n请基于前面列出的文件结构，回答用户的问题。` },
+            args: {
+              prompt: `请基于前面所有任务的结果，用自然语言为用户提供最终答案。要求：\n1. 用 markdown 格式整理\n2. 禁止输出原始 JSON\n3. 清晰易读，直接面向用户`
+            },
             depends_on: ['task-1'],
           },
         ],
@@ -308,27 +336,42 @@ Rules:
             depends_on: [],
           },
           {
-            id: 'task-2',
-            title: '总结结果',
-            purpose: '整理搜索结果',
+            id: 'task-summary',
+            title: '最后总结',
+            purpose: '汇总搜索结果，用自然语言生成最终答案',
             tool: 'llm_reason',
-            args: { prompt: `基于搜索结果，回答: ${userRequest}` },
+            args: {
+              prompt: `请基于搜索结果，用自然语言为用户提供最终答案。要求：\n1. 用 markdown 格式整理\n2. 禁止输出原始 JSON\n3. 清晰易读，直接面向用户`
+            },
             depends_on: ['task-1'],
           },
         ],
       };
     }
 
-    // 默认：单个 llm_reason
+    // 默认：单个回答 + 总结
     return {
       title: userRequest.slice(0, 60),
-      subtasks: [{
-        id: 'task-1',
-        title: '回答用户问题',
-        tool: 'llm_reason',
-        args: { prompt: userRequest },
-        depends_on: [],
-      }],
+      subtasks: [
+        {
+          id: 'task-1',
+          title: '回答用户问题',
+          purpose: '直接回答',
+          tool: 'llm_reason',
+          args: { prompt: userRequest },
+          depends_on: [],
+        },
+        {
+          id: 'task-summary',
+          title: '最后总结',
+          purpose: '用自然语言总结最终答案',
+          tool: 'llm_reason',
+          args: {
+            prompt: `请用自然语言为用户提供最终答案。要求：\n1. 用 markdown 格式整理\n2. 禁止输出原始 JSON\n3. 清晰易读，直接面向用户`
+          },
+          depends_on: ['task-1'],
+        },
+      ],
     };
   }
 
@@ -497,6 +540,8 @@ JSON 格式：
     }
 
     this.onProgress({ type: 'subtask_done', taskId: id, result: result.slice(0, 500) });
+    const logPrefix = id === 'task-summary' ? 'executeSubtask 最后总结' : 'executeSubtask';
+    console.log(`[${logPrefix}] ${id} done: status=${success ? 'completed' : 'failed'}, result length=${result.length}, preview: ${JSON.stringify(result.slice(0, 200))}`);
     return { id, title, result, status: success ? 'completed' : 'failed' };
   }
 
@@ -583,18 +628,28 @@ JSON 格式：
     ).join('\n\n---\n\n');
     
     const messages = [
-      { role: 'system', content: system || 'You are a helpful AI assistant.' },
+      { role: 'system', content: (system || 'You are a helpful AI assistant.') + '\n\nCRITICAL: You are producing the final answer shown directly to the user. Always respond in natural language. Never output raw JSON, JavaScript objects, or data structures. Use markdown formatting for readability.' },
       ...(history || []).slice(-10),
-      { role: 'user', content: `Original request: ${originalRequest}\n\nHere are the results from executing subtasks:\n\n${resultSummary}\n\nPlease synthesize these results into a clear, comprehensive final answer.` },
+      { role: 'user', content: `Original request: ${originalRequest}\n\nHere are the results from executing subtasks:\n\n${resultSummary}\n\nSynthesize the results above into a clear answer using only natural language + markdown. This is shown directly to the user. NEVER output raw JSON or data dumps — if the result contains JSON, describe it in words.` },
     ];
     
+    console.log(`[TaskOrchestrator] 最后总结: synthesize input: ${results.length} results, resultSummary length=${resultSummary.length}`);
+    console.log(`[TaskOrchestrator] 最后总结: resultSummary (first 300 chars): ${resultSummary.slice(0, 300)}`);
+
     try {
       const llmResponse = await this.llm.chat(messages, { temperature: 0.7, maxTokens: 2000 });
+      console.log(`[TaskOrchestrator] 最后总结: synthesize LLM response: length=${llmResponse?.length || 0}, preview: ${JSON.stringify(llmResponse?.slice(0, 300))}`);
       return llmResponse;
     } catch (err) {
       console.error('[TaskOrchestrator] Synthesis failed:', err.message);
-      // Fallback: return raw results
-      return `Task execution completed. Results:\n\n${resultSummary}`;
+      // Fallback: summarize results in natural language (no raw JSON)
+      if (!results || results.length === 0) {
+        return '所有任务执行完毕，但未能获取到有效结果。请尝试重新提问或简化需求。';
+      }
+      const summary = results.map(r =>
+        `- **${r.title}**：${r.status === 'completed' ? '已完成' : `失败 (${r.status})`}`
+      ).join('\n');
+      return `以下是任务执行的摘要：\n\n${summary}\n\n如需详细信息，请重新提问。`;
     }
   }
 }

@@ -29,9 +29,10 @@ const IDENTITY_DIR = path.join(ROOT_DIR, '.workbuddy', 'memory');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');
+const CONVERSATIONS_DIR = path.join(ROOT_DIR, 'conversations');
 
 // Create required directories on startup
-[IDENTITY_DIR, LOGS_DIR, path.join(ROOT_DIR, 'backend', 'logs')].forEach(dir => {
+[IDENTITY_DIR, LOGS_DIR, path.join(ROOT_DIR, 'backend', 'logs'), CONVERSATIONS_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     console.log(`[Startup] Created directory: ${dir}`);
@@ -226,7 +227,19 @@ function buildSystemPrompt(provider = 'openai') {
 - When a user loads a skill by name, inject the skill's full content and follow its instructions.
 - Decompose complex tasks into parallel subtasks when beneficial.
 - Be direct, thorough, and resourceful.
-- Current date: ${new Date().toISOString().split('T')[0]}`);
+- Current date: ${new Date().toISOString().split('T')[0]}
+
+## Output Format (CRITICAL)
+
+### Final Answers → Natural Language
+When responding to the user directly (the FINAL answer, not a tool call):
+- Use natural language with clear formatting: markdown headers, bullet points, paragraphs, tables, code blocks as needed.
+- NEVER output raw JSON as your final answer.
+- Structure your answer for human readability.
+
+### Tool Calls → Structured Format
+When you need to execute a tool (shell command, file operation, web search, etc.):
+${useNativeFunctionCalling ? '- Use the native function calling mechanism — the system handles tool invocation automatically.' : '- Output a JSON tool_call block as defined below.'}`);
 
   // Append tool usage instructions (parameterized)
   parts.push(buildToolInstructions(useNativeFunctionCalling));
@@ -523,12 +536,140 @@ app.post('/api/channels/feishu/test', async (req, res) => {
 });
 
 // ============================================================
+// Conversation file storage API
+// Each conversation stored as a separate JSON file
+// ============================================================
+
+function getConversationFilePath(conversationId) {
+  return path.join(CONVERSATIONS_DIR, `${conversationId}.json`);
+}
+
+function loadConversationFile(conversationId) {
+  const filePath = getConversationFilePath(conversationId);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    console.error(`[Conversations] Failed to load ${conversationId}:`, e.message);
+    return null;
+  }
+}
+
+function saveConversationFile(conv) {
+  const filePath = getConversationFilePath(conv.id);
+  fs.writeFileSync(filePath, JSON.stringify(conv, null, 2), 'utf8');
+}
+
+function deleteConversationFile(conversationId) {
+  const filePath = getConversationFilePath(conversationId);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function listConversationFiles() {
+  if (!fs.existsSync(CONVERSATIONS_DIR)) return [];
+  return fs.readdirSync(CONVERSATIONS_DIR)
+    .filter(f => f.endsWith('.json'))
+    .map(f => {
+      const id = f.replace('.json', '');
+      const conv = loadConversationFile(id);
+      if (!conv) return null;
+      return {
+        id: conv.id,
+        title: conv.title || '',
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        messageCount: (conv.messages || []).length,
+      };
+    })
+    .filter(Boolean);
+}
+
+// GET /api/conversations — list all conversations (metadata only)
+app.get('/api/conversations', (req, res) => {
+  try {
+    const list = listConversationFiles();
+    // Sort by updatedAt descending
+    list.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    res.json({ success: true, conversations: list });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /api/conversations/:id — get full conversation with messages
+app.get('/api/conversations/:id', (req, res) => {
+  try {
+    const conv = loadConversationFile(req.params.id);
+    if (!conv) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
+    res.json({ success: true, conversation: conv });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/conversations — create new conversation
+app.post('/api/conversations', (req, res) => {
+  try {
+    const { title, messages, id } = req.body || {};
+    const convId = id || ('conv-' + Date.now());
+    const now = new Date().toISOString();
+    const conv = {
+      id: convId,
+      title: title || '',
+      messages: messages || [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    saveConversationFile(conv);
+    res.json({ success: true, conversation: conv });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// PUT /api/conversations/:id — update conversation (title, messages)
+app.put('/api/conversations/:id', (req, res) => {
+  try {
+    const conv = loadConversationFile(req.params.id);
+    if (!conv) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
+    const { title, messages } = req.body || {};
+    if (title !== undefined) conv.title = title;
+    if (messages !== undefined) conv.messages = messages;
+    conv.updatedAt = new Date().toISOString();
+    saveConversationFile(conv);
+    res.json({ success: true, conversation: conv });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// DELETE /api/conversations/:id — delete conversation
+app.delete('/api/conversations/:id', (req, res) => {
+  try {
+    const conv = loadConversationFile(req.params.id);
+    if (!conv) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
+    deleteConversationFile(req.params.id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ============================================================
 // WebSocket handler
 // ============================================================
 
 wss.on('connection', (ws) => {
   const sessionId = uuidv4();
-  sessions.set(sessionId, { ws, history: [], config: loadConfig() });
+  sessions.set(sessionId, { ws, history: [], config: loadConfig(), currentConversationId: null });
 
   broadcast(ws, { type: 'session_init', sessionId });
 
@@ -609,6 +750,26 @@ wss.on('connection', (ws) => {
     sessions.delete(sessionId);
   });
 });
+
+// ============================================================
+// Shared answer finalization — ensures every path ends with `done`
+// ============================================================
+
+function finalizeWithAnswer(ws, session, answer) {
+  console.log(`[Server] 最后总结: finalizeWithAnswer length=${answer?.length || 0}, preview: ${JSON.stringify(answer?.slice(0, 300))}`);
+  answer = identity.filterOutput(answer);
+  session.history.push({ role: 'assistant', content: answer });
+  broadcast(ws, {
+    type: 'done',
+    content: answer,
+    subtasks: [],
+  });
+}
+
+function finalizeWithError(ws, session, errorMessage) {
+  const answer = `操作未完成：${errorMessage}\n\n请检查配置后重试。`;
+  finalizeWithAnswer(ws, session, answer);
+}
 
 // ============================================================
 // Direct tool/command execution (no LLM needed)
@@ -733,12 +894,37 @@ function buildLLMMessages(system, history) {
 // ============================================================
 
 async function handleChat(sessionId, session, msg) {
-  const { ws, history, config } = session;
+  const { ws, config } = session;
+  let { history, currentConversationId } = session;
   const userMessage = msg.content;
   const conversationId = msg.conversationId || 'unknown';
 
   // Log conversation information
   console.log(`[Conversation] sessionId=${sessionId}, conversationId=${conversationId}, message="${userMessage.substring(0, 100)}..."`);
+
+  // ── Isolate history per conversation ──────────
+  // If conversation changed, reload history from the conversation file
+  if (conversationId !== currentConversationId) {
+    if (conversationId !== 'unknown') {
+      const conv = loadConversationFile(conversationId);
+      if (conv && Array.isArray(conv.messages)) {
+        // Rebuild history from stored messages (user + assistant only)
+        session.history = conv.messages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => ({ role: m.role, content: m.content }));
+        console.log(`[Conversation] Switched to ${conversationId}, loaded ${session.history.length} history messages from file`);
+      } else {
+        session.history = [];
+        console.log(`[Conversation] Switched to ${conversationId}, no history found (new conversation)`);
+      }
+    } else {
+      // 'unknown' = new conversation, start with empty history
+      session.history = [];
+      console.log('[Conversation] New conversation, history reset to empty');
+    }
+    session.currentConversationId = conversationId;
+    history = session.history; // refresh local reference
+  }
 
   // ── Direct tool/command execution (skip LLM) ──────────
   // If user sends JSON with "command" or "tool" field, execute directly
@@ -767,10 +953,7 @@ async function handleChat(sessionId, session, msg) {
   // Check API key (skip for local provider)
   const cfg = { ...loadConfig(), ...config };
   if (cfg.provider !== 'local' && !cfg.apiKey) {
-    broadcast(ws, {
-      type: 'error',
-      message: 'No API key configured. Please set your API key in Settings.',
-    });
+    finalizeWithError(ws, session, '未配置 API Key，请在设置中填入你的 API Key。');
     return;
   }
 
@@ -811,18 +994,9 @@ async function handleChat(sessionId, session, msg) {
           broadcast(ws, { type: 'chat_chunk', content: chunk.content });
         }
       }
-      // Filter identity leakage
-      fullAnswer = identity.filterOutput(fullAnswer);
-      // Add to history
-      history.push({ role: 'assistant', content: fullAnswer });
-      // Signal done — triggers Stop→Send button swap in frontend
-      broadcast(ws, {
-        type: 'done',
-        content: fullAnswer,
-        subtasks: [],
-      });
+      finalizeWithAnswer(ws, session, fullAnswer);
     } catch (err) {
-      broadcast(ws, { type: 'error', message: err.message });
+      finalizeWithError(ws, session, `LLM 调用失败：${err.message}`);
     }
     return;
   }
@@ -865,37 +1039,54 @@ async function handleChat(sessionId, session, msg) {
     const results = Array.isArray(executionResult?.results) ? executionResult.results : [];
     console.log(`[Server] Execution completed, got ${results.length} results`);
     
+    // Step 3: If all subtasks failed, produce a graceful summary
     if (results.length === 0) {
-      console.warn('[Server] No results from executeAll, using fallback');
+      console.warn('[Server] No results from executeAll');
+
+      try {
+        const fallbackAnswer = await llm.chat([
+          { role: 'system', content: system + '\n\nCRITICAL: You are producing the final answer shown directly to the user. Always respond in natural language. Never output raw JSON.' },
+          { role: 'user', content: `User asked: "${userMessage}"\n\nAll subtasks failed or produced no results. Please respond to the user in natural language, explaining that the task could not be completed, and suggest possible next steps.` },
+        ], { temperature: 0.7, maxTokens: 500 });
+        finalizeWithAnswer(ws, session, fallbackAnswer);
+      } catch {
+        finalizeWithError(ws, session, '所有子任务执行失败，未能生成结果。');
+      }
+      return;
     }
 
-    // Step 3: Synthesize if multiple subtasks
+    // Step 4: Use summary subtask result as final answer, or synthesize as fallback
+    // 优先使用 'task-summary' 子任务的结果（llm_reason 自然语言总结）
+    const summaryResult = results.find(r => r.id === 'task-summary');
     let finalAnswer;
-    if (results.length === 1) {
-      finalAnswer = results[0].result;
+    
+    if (summaryResult && summaryResult.status === 'completed' && summaryResult.result) {
+      finalAnswer = summaryResult.result;
+      console.log(`[Server] 最后总结: summary subtask result, length=${finalAnswer.length}`);
     } else {
+      // Fallback: call synthesize
       broadcast(ws, { type: 'synthesizing' });
       finalAnswer = await orchestrator.synthesize(userMessage, results, context);
+      console.log(`[Server] 最后总结: synthesize result, length=${finalAnswer?.length || 0}`);
     }
+    console.log(`[Server] 最后总结 preview: ${JSON.stringify(finalAnswer?.slice(0, 300))}`);
 
-    // Filter identity leakage
-    finalAnswer = identity.filterOutput(finalAnswer);
+    // 前缀 "最后总结:" 确保 WebUI 清晰显示
+    finalAnswer = '最后总结:\n\n' + (finalAnswer || '未能生成最终结果。');
 
-    // Add to history
-    history.push({ role: 'assistant', content: finalAnswer });
-
-    broadcast(ws, {
-      type: 'done',
-      content: finalAnswer,
-      subtasks: results.map(r => ({
-        id: r.id,
-        title: r.title,
-        status: r.status,
-      })),
-    });
+    finalizeWithAnswer(ws, session, finalAnswer);
 
   } catch (err) {
-    broadcast(ws, { type: 'error', message: err.message });
+    // Try to produce a natural language explanation for the error
+    try {
+      const errorExplanation = await llm.chat([
+        { role: 'system', content: 'You are a helpful AI assistant. You output only natural language, never JSON. Keep it brief.' },
+        { role: 'user', content: `The user asked: "${userMessage}"\n\nThe system encountered an error while processing: ${err.message}\n\nGive the user a short, natural language explanation and suggest next steps.` },
+      ], { temperature: 0.7, maxTokens: 300 });
+      finalizeWithAnswer(ws, session, errorExplanation);
+    } catch {
+      finalizeWithError(ws, session, `处理请求时出错：${err.message}`);
+    }
   }
 }
 
