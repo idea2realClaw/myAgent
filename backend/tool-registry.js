@@ -318,7 +318,12 @@ class ToolRegistry {
         
         try {
           const { execSync } = await import('child_process');
-          const result = execSync(`python3 ${tmpFile} ${args}`, {
+          // Find project venv Python (cross-platform)
+          const venvPy = process.platform === 'win32'
+            ? path.join(WORKSPACE_ROOT, 'venv', 'Scripts', 'python.exe')
+            : path.join(WORKSPACE_ROOT, 'venv', 'bin', 'python3');
+          const pythonCmd = fsSync.existsSync(venvPy) ? venvPy : 'python3';
+          const result = execSync(`"${pythonCmd}" ${tmpFile} ${args}`, {
             timeout: 30000,
             maxBuffer: 1024 * 1024,
             encoding: 'utf8',

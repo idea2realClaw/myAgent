@@ -18,6 +18,11 @@ import { SkillLoader } from './skill-loader.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
 import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI } from './tool-executor.js';
+import { registry as toolRegistry } from './tool-registry.js';
+import { SingleAgentTurnKernel, buildSendWire } from './agent-kernel.js';
+import { SubAgentManager } from './subagent.js';
+import { MCPClient, registerMCPTools } from './mcp-client.js';
+import { truncateToolResult, estimateWireTokens } from './context-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 import { PermissionManager } from './permission-manager.js';
 import { AgentsMdLoader } from './agents-md-loader.js';
@@ -31,17 +36,39 @@ const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');
 
 // ============================================================
+// Create required directories on startup (MUST be before logging setup)
+// ============================================================
+[IDENTITY_DIR, LOGS_DIR, path.join(ROOT_DIR, 'backend', 'logs')].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`[Startup] Created directory: ${dir}`);
+  }
+});
+
+// ============================================================
 // Logging to file (in addition to console)
 // ============================================================
 const logFile = fs.createWriteStream(path.join(LOGS_DIR, 'myagent.log'), { flags: 'a' });
 const logFileError = fs.createWriteStream(path.join(LOGS_DIR, 'myagent-error.log'), { flags: 'a' });
 
+// Add error handlers to log streams
+logFile.on('error', (err) => {
+  console.error('[Logging] Failed to write to log file:', err.message);
+});
+logFileError.on('error', (err) => {
+  console.error('[Logging] Failed to write to error log file:', err.message);
+});
+
 function logToFile(level, ...args) {
   const timestamp = new Date().toISOString();
   const message = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
   const line = `[${timestamp}] [${level}] ${message}\n`;
-  logFile.write(line);
-  if (level === 'error') logFileError.write(line);
+  try {
+    logFile.write(line);
+    if (level === 'error') logFileError.write(line);
+  } catch (err) {
+    origError('[Logging] Failed to write to log file:', err.message);
+  }
 }
 
 // Override console methods to also write to file
@@ -52,14 +79,6 @@ const origError = console.error;
 console.log = (...args) => { origLog(...args); logToFile('info', ...args); };
 console.warn = (...args) => { origWarn(...args); logToFile('warn', ...args); };
 console.error = (...args) => { origError(...args); logToFile('error', ...args); };
-
-// Create required directories on startup
-[IDENTITY_DIR, LOGS_DIR, path.join(ROOT_DIR, 'backend', 'logs')].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    console.log(`[Startup] Created directory: ${dir}`);
-  }
-});
 
 // ============================================================
 // Config persistence
@@ -208,6 +227,81 @@ const permissionManager = new PermissionManager();
 
 const agentsMdLoader = new AgentsMdLoader();
 await agentsMdLoader.load();
+
+// ── Agent 能力层（移植自 qaimodelbuilder） ──
+// 共享回合内核（main / 子 agent 共用）
+const agentKernel = new SingleAgentTurnKernel();
+
+// 子 Agent 管理器：主 Agent 通过 `agent` 工具派生子 Agent（深度限制 + 并行 + profile）
+const subAgentManager = new SubAgentManager({
+  createLLM: (cfg) => new LLMAdapter(cfg),
+  toolRunner: (call) => executeTool(call),
+  getToolSchemas: () => getAllOpenAIToolSchemas(),
+  skillLoader,
+  agentsMdLoader,
+  llmConfig: { provider: 'openrouter', apiKey: '', model: '', baseURL: 'https://openrouter.ai/api/v1' },
+});
+
+// MCP 客户端集合（按需从配置连接；默认无 → 不连接）
+const mcpClients = new Map(); // name -> MCPClient
+
+// 默认 LLM 配置（子 Agent / 内核同源路由用，运行时由 handleChat 用会话配置覆盖）
+function defaultLlmConfig() {
+  const cfg = loadConfig();
+  return {
+    provider: cfg.provider || 'openrouter',
+    apiKey: cfg.apiKey || '',
+    model: cfg.model || '',
+    baseURL: cfg.provider === 'openrouter' ? (cfg.baseURL || 'https://openrouter.ai/api/v1') : (cfg.baseURL || undefined),
+  };
+}
+subAgentManager.llmConfig = defaultLlmConfig();
+
+// 动态构建完整的 OpenAI 函数调用工具 schema（含本地工具 + agent + skill + mcp）
+function toOpenAIParams(parameters) {
+  const props = {};
+  const required = [];
+  for (const [k, v] of Object.entries(parameters || {})) {
+    props[k] = { type: v.type || 'string', description: v.description || '' };
+    if (v.required) required.push(k);
+  }
+  return { type: 'object', properties: props, required };
+}
+
+function getAllOpenAIToolSchemas() {
+  const tools = toolRegistry.getAllTools().map((t) => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: toOpenAIParams(t.parameters) },
+  }));
+  // agent 工具（派生子 Agent）
+  tools.push(subAgentManager.buildAgentToolSchema());
+  // skill 工具（按需加载 skill 全文）
+  const skillSchema = skillLoader.toToolSchema();
+  if (skillSchema.function.parameters.properties.name.enum.length > 0) {
+    tools.push(skillSchema);
+  }
+  return tools;
+}
+
+// 启动配置的 MCP servers（若有），把远端工具注册进 registry
+async function initMCP() {
+  const cfg = loadConfig();
+  const servers = Array.isArray(cfg.mcpServers) ? cfg.mcpServers : [];
+  for (const s of servers) {
+    if (!s || !s.name || !s.command) continue;
+    try {
+      const client = new MCPClient(s);
+      await client.connect();
+      const registered = await registerMCPTools(client, toolRegistry, `mcp_${s.name}_`);
+      mcpClients.set(s.name, client);
+      console.log(`[MCP] Connected '${s.name}', registered ${registered.length} tools`);
+    } catch (err) {
+      console.error(`[MCP] Failed to connect '${s.name}': ${err.message}`);
+    }
+  }
+}
+// 延迟连接，不阻塞启动
+initMCP().catch((e) => console.error('[MCP] init error:', e.message));
 
 // ============================================================
 // WebSocket sessions
@@ -768,6 +862,221 @@ function buildLLMMessages(system, history) {
 }
 
 // ============================================================
+// Unified Agent Loop — 移植自 qaimodelbuilder 的共享回合内核驱动
+// 用 SingleAgentTurnKernel 统一驱动 main agent（替代原来的分裂式
+// 简单流 / TaskOrchestrator 分解流），原生支持工具调用、子 Agent 派发、
+// skill 加载、上下文压缩。保持 WebSocket 事件协议兼容前端。
+// ============================================================
+
+async function runAgentLoop({ ws, session, llm, system, history, config, useTools }) {
+  const llmConfig = {
+    provider: config.provider || 'openrouter',
+    apiKey: config.apiKey,
+    model: config.model,
+    baseURL: config.provider === 'openrouter' ? (config.baseURL || 'https://openrouter.ai/api/v1') : (config.baseURL || undefined),
+  };
+  subAgentManager.llmConfig = llmConfig;
+
+  // 1) 播种 wire（system + 历史），内核会原地增长它
+  const wire = [{ role: 'system', content: system }, ...history.slice(-10)];
+
+  // 2) 工具 schema（复杂路径才带工具；简单路径纯文本）
+  const toolSchemas = useTools ? getAllOpenAIToolSchemas() : [];
+  const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
+
+  // 3) openRoundStream：开 LLM 流，带工具
+  const openRoundStream = async function* (_roundNo, sendWire) {
+    let frames = [];
+    try {
+      for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
+        if (chunk.type === 'text') frames.push({ type: 'chunk', text: chunk.content });
+        else if (chunk.type === 'tool_call') frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments });
+      }
+      frames.push({ type: 'end', payload: {} });
+    } catch (e) {
+      frames.push({ type: 'error', message: e.message });
+    }
+    for (const f of frames) yield f;
+  };
+
+  // 4) toolExecutor：并行执行；agent/skill 特殊处理
+  const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
+
+  // 5) buildToolMetas
+  const buildToolMetas = (rawToolCalls, roundNo) =>
+    rawToolCalls.map((tc, i) => {
+      const name = tc.name || (tc.function && tc.function.name) || 'unknown';
+      const args = tc.arguments || (tc.function && tc.function.arguments) || {};
+      const callId = tc.id || `call_${roundNo}_${i}`;
+      return [name, typeof args === 'string' ? safeParseArgs(args) : args, callId];
+    });
+
+  const executedTools = [];
+  let finalText = '';
+
+  try {
+    for await (const kev of agentKernel.run({
+      wireMessages: wire,
+      openRoundStream,
+      toolExecutor,
+      buildToolMetas,
+      maxRounds: config.maxRounds || 16,
+      abortCheck: () => session.stopRequested === true,
+      modelHint: llmConfig.model,
+    })) {
+      const mapped = adaptKernelEventToWs(kev, { ws, executedTools });
+      if (mapped) {
+        // executedTools 记录（用于 done 展示）
+        if (mapped.__record) {
+          executedTools.push(mapped.__record);
+          continue;
+        }
+        broadcast(ws, mapped);
+      }
+    }
+  } catch (err) {
+    broadcast(ws, { type: 'error', message: err.message });
+    return { content: '', error: err.message };
+  }
+
+  // 从 wire 取最终答案（最后一条非哨兵 assistant 文本）
+  finalText = wireToFinalText(wire);
+  finalText = identity.filterOutput(finalText);
+
+  // 兜底：模型在带工具场景下可能返回空响应（免费档限流 / 工具调用支持不稳定）。
+  // 避免前端收到空白答案，给出明确提示而非静默空内容。
+  if (!finalText || finalText.trim() === '') {
+    if (executedTools.length > 0) {
+      finalText = '[模型在工具执行后未返回总结文本（可能是当前模型对工具调用支持不稳定或触发限流）。工具已执行：' +
+        executedTools.map((t) => t.title).join('、') + '。请重试或更换模型。]';
+    } else {
+      finalText = '[模型未返回有效内容（可能是当前模型触发限流或临时不可用）。请稍后重试或更换模型。]';
+    }
+  }
+
+  // 写回历史
+  history.push({ role: 'assistant', content: finalText });
+
+  broadcast(ws, {
+    type: 'done',
+    content: finalText,
+    subtasks: executedTools.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+  });
+
+  return { content: finalText };
+}
+
+// ── 主循环工具执行器（并行） ──
+async function* makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig }) {
+  const tasks = toolMetas.map(async ([name, args, callId]) => {
+    const start = Date.now();
+    try {
+      if (name === 'agent') {
+        return await runMainAgentTool(args, { ws, session, llmConfig, callId });
+      }
+      if (name === 'skill') {
+        return await runSkillTool(args, callId);
+      }
+      const result = await executeTool({ name, arguments: args });
+      const ok = result.success !== false;
+      const raw = result.output != null ? String(result.output) : (result.error || '');
+      return { partial: false, callId, toolName: name, resultText: truncateToolResult(raw), ok, durationMs: Date.now() - start };
+    } catch (err) {
+      return { partial: false, callId, toolName: name, resultText: truncateToolResult(`Error: ${err.message}`), ok: false, durationMs: Date.now() - start };
+    }
+  });
+  const results = await Promise.all(tasks);
+  for (const r of results) yield r;
+}
+
+// 主循环中 agent 工具：派生子 Agent（深度=1），实时转发进度为 tool 卡片
+async function runMainAgentTool(args, { ws, session, llmConfig, callId }) {
+  const start = Date.now();
+  const description = args.description || args.prompt || '';
+  // 立即给出"派生子 Agent"卡片
+  broadcast(ws, { type: 'tool_call', tool: 'agent', args: { description: description.slice(0, 200), name: args.name || null } });
+  let final = '[sub-agent produced no output]';
+  let ok = true;
+  try {
+    for await (const ev of subAgentManager.iterEvents({ arguments: args }, {
+      modelHint: llmConfig.model,
+      allowSpawn: args.allow_spawn === true,
+      spawnDepth: 1,
+      parentTabId: session.id || 'main',
+      parentAbortCheck: () => session.stopRequested === true,
+    })) {
+      if (ev.type === 'subagent_done') final = String(ev.result || '');
+      else if (ev.type === 'subagent_error') { final = `[sub-agent error: ${ev.message}]`; ok = false; }
+      // subagent_start / output / tool / tool_result 不单独转发（前端无对应处理，避免噪音）
+    }
+  } catch (e) {
+    final = `[sub-agent error: ${e.message}]`;
+    ok = false;
+  }
+  const resultText = truncateToolResult(identity.filterOutput(final));
+  broadcast(ws, { type: 'tool_result', success: ok, output: resultText });
+  return { partial: false, callId, toolName: 'agent', resultText, ok, durationMs: Date.now() - start };
+}
+
+// 主循环中 skill 工具：加载 skill 全文作为工具结果返回给模型遵循
+async function runSkillTool(args, callId) {
+  const start = Date.now();
+  const name = args.name;
+  const injected = skillLoader.getSkillContentForInjection(name, { page: args.page || 0 });
+  if (!injected) {
+    return { partial: false, callId, toolName: 'skill', resultText: `Skill '${name}' not found or disabled.`, ok: false, durationMs: Date.now() - start };
+  }
+  const body = `--- SKILL: ${injected.name} ---\n${injected.content}` +
+    (injected.hasMore ? `\n\n[This skill has more pages; call skill with page=${injected.page + 1} to continue]` : '');
+  return { partial: false, callId, toolName: 'skill', resultText: body, ok: true, durationMs: Date.now() - start };
+}
+
+// ── KernelEvent → WebSocket 帧 ──
+function adaptKernelEventToWs(kev, { ws, executedTools }) {
+  switch (kev.kind) {
+    case 'round_started':
+      return null;
+    case 'chunk':
+      return { type: 'chat_chunk', content: kev.text };
+    case 'tool_calls_issued':
+      // 为每个工具发一张 tool_call 卡片（agent 已由 runMainAgentTool 发过，跳过避免重复）
+      for (const [name, , callId] of kev.toolMetas) {
+        if (name === 'agent') continue;
+        const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
+        broadcast(ws, { type: 'tool_call', tool: name, args });
+        executedTools.push({ id: callId, title: `${name}(${JSON.stringify(args).slice(0, 80)})`, status: 'running' });
+      }
+      return null;
+    case 'tool_result':
+      return { type: 'tool_result', success: kev.ok, output: kev.resultText };
+    case 'finished':
+      return null; // 由 done 收尾
+    case 'max_rounds_reached':
+      broadcast(ws, { type: 'thinking', message: `⚠️ 达到最大回合(${kev.maxRounds})，停止以避免无限循环` });
+      return null;
+    case 'aborted':
+      return null;
+    case 'error':
+      return { type: 'error', message: kev.message };
+    default:
+      return null;
+  }
+}
+
+function safeParseArgs(s) {
+  try { return JSON.parse(s); } catch { return {}; }
+}
+function wireToFinalText(wire) {
+  for (let i = wire.length - 1; i >= 0; i--) {
+    const m = wire[i];
+    if (m.role === 'assistant' && typeof m.content === 'string' && m.content && m.content !== '[tool_calls]') {
+      return m.content;
+    }
+  }
+  return '';
+}
+
+// ============================================================
 // Chat handler
 // ============================================================
 
@@ -828,111 +1137,27 @@ async function handleChat(sessionId, session, msg) {
   history.push({ role: 'user', content: userMessage });
 
   const system = buildSystemPrompt(cfg.provider);
-  const context = { system, history: history.slice(-10) };
 
-  // ── Analyze question via LLM: simple (direct answer) or complex (decompose) ──
+  // ── 统一 Agent 循环（移植自 qaimodelbuilder 共享回合内核） ──
+  // 简单问题 → 纯文本循环（无工具）；复杂问题 → 带工具的 agentic 循环
+  // （原生工具调用 + 子 Agent 派发 + skill 加载 + 上下文压缩）
   broadcast(ws, { type: 'thinking', message: '🧠 分析问题难度...' });
-  const questionType = await classifyQuestion(llm, userMessage);
-  const isSimple = (questionType === 'simple');
-
-  if (isSimple) {
-    // Simple question → direct LLM answer, no decomposition
-    broadcast(ws, { type: 'thinking', message: '思考中...' });
-    try {
-      const llmMessages = buildLLMMessages(system, history);
-      let fullAnswer = '';
-      for await (const chunk of llm.stream(llmMessages, { temperature: 0.7 })) {
-        if (typeof chunk === 'string') {
-          fullAnswer += chunk;
-          broadcast(ws, { type: 'chat_chunk', content: chunk });
-        } else if (chunk.type === 'text') {
-          fullAnswer += chunk.content;
-          broadcast(ws, { type: 'chat_chunk', content: chunk.content });
-        }
-      }
-      // Filter identity leakage
-      fullAnswer = identity.filterOutput(fullAnswer);
-      // Add to history
-      history.push({ role: 'assistant', content: fullAnswer });
-      // Signal done — triggers Stop→Send button swap in frontend
-      broadcast(ws, {
-        type: 'done',
-        content: fullAnswer,
-        subtasks: [],
-      });
-    } catch (err) {
-      broadcast(ws, { type: 'error', message: err.message });
-    }
-    return;
+  let isSimple = false;
+  try {
+    const questionType = await classifyQuestion(llm, userMessage);
+    isSimple = (questionType === 'simple');
+  } catch (err) {
+    console.warn('[handleChat] classify failed, defaulting to complex:', err.message);
   }
 
-  // Complex question → decompose into executable subtasks with pyramid analysis
-  broadcast(ws, { type: 'thinking', message: '🧠 正在分析问题并分解为可执行的子任务...' });
-
-  const orchestrator = new TaskOrchestrator(llm, (event) => {
-    broadcast(ws, event);
-  }, () => session.stopRequested, { permissionManager, snapshotManager });
-
   try {
-    // Step 1: Understand and decompose with pyramid analysis
-    broadcast(ws, { type: 'decomposing' });
-    const plan = await orchestrator.decompose(userMessage, system);
-    broadcast(ws, {
-      type: 'plan',
-      plan: {
-        title: plan.title,
-        subtaskCount: plan.subtasks.length,
-        subtasks: plan.subtasks.map(t => ({
-          id: t.id,
-          title: t.title,
-          type: t.tool,
-          purpose: t.purpose || '',
-          status: 'pending',
-          depends_on: t.depends_on || [],
-          command: `${t.tool}(${JSON.stringify(t.args).slice(0, 120)})`,
-        })),
-      },
-    });
-
-    // Step 2: Execute subtasks (parallel where possible)
-    console.log(`[Server] Executing ${plan.subtasks?.length || 0} subtasks...`);
-    const executionResult = await orchestrator.executeAll(plan, context, (taskId, chunk) => {
-      // chunk events already sent via onProgress
-    });
-    
-    // Ensure results is always an array
-    const results = Array.isArray(executionResult?.results) ? executionResult.results : [];
-    console.log(`[Server] Execution completed, got ${results.length} results`);
-    
-    if (results.length === 0) {
-      console.warn('[Server] No results from executeAll, using fallback');
-    }
-
-    // Step 3: Synthesize if multiple subtasks
-    let finalAnswer;
-    if (results.length === 1) {
-      finalAnswer = results[0].result;
+    if (isSimple) {
+      broadcast(ws, { type: 'thinking', message: '思考中...' });
+      await runAgentLoop({ ws, session, llm, system, history, config: cfg, useTools: false });
     } else {
-      broadcast(ws, { type: 'synthesizing' });
-      finalAnswer = await orchestrator.synthesize(userMessage, results, context);
+      broadcast(ws, { type: 'thinking', message: '🧠 正在规划并执行任务（含工具调用 / 子 Agent）...' });
+      await runAgentLoop({ ws, session, llm, system, history, config: cfg, useTools: true });
     }
-
-    // Filter identity leakage
-    finalAnswer = identity.filterOutput(finalAnswer);
-
-    // Add to history
-    history.push({ role: 'assistant', content: finalAnswer });
-
-    broadcast(ws, {
-      type: 'done',
-      content: finalAnswer,
-      subtasks: results.map(r => ({
-        id: r.id,
-        title: r.title,
-        status: r.status,
-      })),
-    });
-
   } catch (err) {
     broadcast(ws, { type: 'error', message: err.message });
   }

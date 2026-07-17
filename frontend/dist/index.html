@@ -1061,21 +1061,6 @@
               <label style="font-size: 0.6875rem">App Secret</label>
               <input type="password" id="feishu-app-secret" placeholder="***" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
             </div>
-            <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size: 0.6875rem">Verification Token</label>
-              <input type="text" id="feishu-verification-token" placeholder="***" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
-            </div>
-            <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size: 0.6875rem">Encrypt Key (可选)</label>
-              <input type="password" id="feishu-encrypt-key" placeholder="留空则不使用加密" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
-            </div>
-            <div class="form-group" style="margin-bottom:8px">
-              <label style="font-size: 0.6875rem">Domain</label>
-              <select id="feishu-domain" style="width:100%;padding:6px 8px;font-size: 0.75rem;border-radius:4px;border:1px solid var(--border);background:var(--bg2);color:var(--text)">
-                <option value="https://open.feishu.cn">飞书 (中国) - https://open.feishu.cn</option>
-                <option value="https://open.larksuite.com">Lark (国际) - https://open.larksuite.com</option>
-              </select>
-            </div>
             <div style="font-size: 0.6875rem;color:var(--text3);margin-bottom:8px;padding:6px;background:var(--bg2);border-radius:4px">
               <div style="margin-bottom:4px">📍 Webhook URL:</div>
               <code id="feishu-webhook-url" style="font-size: 0.625rem;word-break:break-all">启动后显示</code>
@@ -2469,9 +2454,6 @@ function loadFeishuConfig() {
     document.getElementById('feishu-app-id').value = cfg.appId === '***' ? '' : (cfg.appId || '');
     // Don't show actual secret/token values
     document.getElementById('feishu-app-secret').value = cfg.hasAppSecret ? '***' : '';
-    document.getElementById('feishu-verification-token').value = cfg.verificationToken === '***' ? '' : (cfg.verificationToken || '');
-    document.getElementById('feishu-encrypt-key').value = cfg.hasEncryptKey ? '***' : '';
-    document.getElementById('feishu-domain').value = cfg.domain || 'https://open.feishu.cn';
     
     // Show/hide settings
     document.getElementById('feishu-settings').style.display = cfg.enabled ? 'block' : 'none';
@@ -2491,20 +2473,14 @@ function toggleFeishu() {
 function saveFeishuConfig() {
   const appId = document.getElementById('feishu-app-id').value;
   const appSecret = document.getElementById('feishu-app-secret').value;
-  const verificationToken = document.getElementById('feishu-verification-token').value;
-  const encryptKey = document.getElementById('feishu-encrypt-key').value;
-  const domain = document.getElementById('feishu-domain').value;
   const enabled = document.getElementById('feishu-enabled').checked;
 
   const body = {
     enabled,
     appId,
     appSecret: appSecret === '***' ? '***' : appSecret,
-    verificationToken,
-    encryptKey: encryptKey === '***' ? '***' : encryptKey,
-    domain,
   };
-
+  
   fetch('/api/channels/feishu/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2518,6 +2494,7 @@ function saveFeishuConfig() {
   }).catch(err => {
     showToast('保存失败: ' + err.message, 'error');
   });
+}
 }
 
 function testFeishuConnection() {

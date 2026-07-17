@@ -127,14 +127,27 @@ Rules:
           const args = JSON.parse(toolCall.function.arguments);
           
           // Validate and normalize
-          const validatedSubtasks = args.subtasks.map((subtask, index) => ({
-            id: subtask.id || `task-${index + 1}`,
-            title: subtask.title || `Step ${index + 1}`,
-            purpose: subtask.purpose || '',
-            tool: PLANABLE_TOOLS.has(subtask.tool) ? subtask.tool : 'llm_reason',
-            args: subtask.args || {},
-            depends_on: subtask.depends_on || [],
-          }));
+          const subtasksList = Array.isArray(args.subtasks) ? args.subtasks : [];
+          const validatedSubtasks = subtasksList.map((subtask, index) => {
+            if (!subtask || typeof subtask !== 'object') {
+              return {
+                id: `task-${index + 1}`,
+                title: `Step ${index + 1}`,
+                purpose: '',
+                tool: 'llm_reason',
+                args: {},
+                depends_on: [],
+              };
+            }
+            return {
+              id: subtask.id || `task-${index + 1}`,
+              title: subtask.title || `Step ${index + 1}`,
+              purpose: subtask.purpose || '',
+              tool: PLANABLE_TOOLS.has(subtask.tool) ? subtask.tool : 'llm_reason',
+              args: subtask.args || {},
+              depends_on: subtask.depends_on || [],
+            };
+          });
 
           return {
             title: args.title || userRequest.slice(0, 60),

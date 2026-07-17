@@ -259,4 +259,61 @@ export class SkillLoader {
       .join('\n');
     return `<available_skills>\n${xml}\n</available_skills>`;
   }
+
+  // ── 只读注入：按需把某个 skill 全文喂给 Agent（移植自 qaimodelbuilder skill 注入） ──
+  // 用于 agent 循环中的 `skill` 工具：模型主动加载某 skill 的完整指令后遵循执行。
+  // 支持分页 + 截断，避免超长 skill 撑爆上下文（与 qaimodelbuilder 的只读注入 + 分页一致）。
+  getSkillContentForInjection(name, { page = 0, pageSize = 6000, maxChars = 24000 } = {}) {
+    const skill = this.skills.get(name);
+    if (!skill || !skill.enabled) return null;
+
+    let content = skill.content || '';
+    const totalChars = content.length;
+    const truncated = totalChars > maxChars;
+    if (truncated) content = content.slice(0, maxChars);
+
+    const pages = Math.max(1, Math.ceil(content.length / pageSize));
+    const safePage = Math.min(Math.max(page, 0), pages - 1);
+    const start = safePage * pageSize;
+    const end = Math.min(start + pageSize, content.length);
+    const pageContent = content.slice(start, end);
+
+    return {
+      name: skill.meta.name,
+      description: skill.meta.description,
+      content: pageContent,
+      page: safePage,
+      pages,
+      hasMore: safePage < pages - 1,
+      totalChars,
+      truncated,
+    };
+  }
+
+  // 导出供 `skill` 工具使用的 schema 形状（OpenAI 函数调用）
+  toToolSchema() {
+    const list = this.getEnabled();
+    return {
+      type: 'function',
+      function: {
+        name: 'skill',
+        description:
+          'Load a skill\'s full instructions by name and follow them. ' +
+          'Available skills: ' + (list.map(s => s.name).join(', ') || '(none)') +
+          '. Call this when the user references a skill or when a skill would help.',
+        parameters: {
+          type: 'object',
+          required: ['name'],
+          properties: {
+            name: {
+              type: 'string',
+              enum: list.map(s => s.name),
+              description: 'Name of the skill to load',
+            },
+            page: { type: 'number', description: 'Page index for long skills (default 0)' },
+          },
+        },
+      },
+    };
+  }
 }

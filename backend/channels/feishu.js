@@ -31,12 +31,20 @@ export function setBroadcaster(fn) {
 
 // Helper: send log to frontend via broadcaster
 function feishuLog(level, message, data = null) {
-  feishuLog('info', `[Feishu] ${message}`, data || '');
+  // Output to console
+  const formatted = `[Feishu] ${message}`;
+  if (data) {
+    console[level](formatted, data);
+  } else {
+    console[level](formatted);
+  }
+  
+  // Broadcast to frontend via WebSocket
   if (logBroadcaster) {
     try {
-      logBroadcaster(level, `[Feishu] ${message}`, data);
+      logBroadcaster(level, message, data);
     } catch (err) {
-      feishuLog('error', '[Feishu] Failed to broadcast log:', err.message);
+      console.error('[Feishu] Failed to broadcast log:', err.message);
     }
   }
 }

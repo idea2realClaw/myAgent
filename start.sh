@@ -78,6 +78,31 @@ echo "✅ Node.js found: $(command -v node)"
 echo "✅ OS detected: $__OS"
 echo ""
 
+# ── Python Virtual Environment Setup ─────────────────────────
+if [ "$__OS" = "mac" ] || [ "$__OS" = "linux" ]; then
+  VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
+  if [ -f "$VENV_PYTHON" ]; then
+    PY_VER="$("$VENV_PYTHON" --version 2>&1)"
+    echo "✅ Python venv: $PY_VER"
+    export PATH="$SCRIPT_DIR/venv/bin:$PATH"
+  else
+    echo "ℹ️   No Python venv found. Run ./setup-mac.sh to create one."
+  fi
+elif [ "$__OS" = "windows" ]; then
+  # ARM64 Windows: use bundled python-arm64
+  for py_dir in \
+    "$SCRIPT_DIR/python-arm64" \
+    "$SCRIPT_DIR/venv/Scripts"; do
+    if [ -f "$py_dir/python.exe" ]; then
+      PY_VER="$("$py_dir/python.exe" --version 2>&1)"
+      echo "✅ Python: $PY_VER ($py_dir)"
+      export PATH="$py_dir:$PATH"
+      break
+    fi
+  done
+fi
+echo ""
+
 echo "╔═════════════════════════════════════════════╗"
 echo "║          Agent WebUI Launcher                 ║"
 echo "╚═════════════════════════════════════════════╝"
