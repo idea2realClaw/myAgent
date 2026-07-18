@@ -13,6 +13,7 @@ const SKILL_SEARCH_PATHS = [
   '.opencode/skills',
   '.claude/skills',
   '.agents/skills',
+  'skills', // 项目仓库内置技能目录（优先于全局，first-found wins）
   path.join(os.homedir(), '.config', 'opencode', 'skills'),
   path.join(os.homedir(), '.claude', 'skills'),
   path.join(os.homedir(), '.agents', 'skills'),
@@ -22,8 +23,9 @@ const SKILL_SEARCH_PATHS = [
 export class SkillLoader {
   constructor(cwd = process.cwd()) {
     this.cwd = cwd;
-    this.skills = new Map(); // name -> { meta, content, path, enabled }
+    this.skills = new Map(); // name -> { meta, content, path, enabled, mode }
     this.disabledSkills = new Set(); // Set of disabled skill names
+    this.skillModes = {}; // Map of skill name -> mode (off/cloud/local/both)
     this.configFile = path.join(cwd, 'config.json');
   }
 
@@ -56,9 +58,15 @@ export class SkillLoader {
         // First-found wins (project > global)
         if (!this.skills.has(name)) {
           const enabled = !this.disabledSkills.has(name);
-          this.skills.set(name, { meta, content, path: skillFile, enabled });
+          this.skills.set(name, { meta, content, path: skillFile, enabled, mode: 'both' });
         }
       }
+    }
+
+    // 应用持久化的技能模式（off/cloud/local/both）
+    for (const [name, mode] of Object.entries(this.skillModes)) {
+      const s = this.skills.get(name);
+      if (s) s.mode = mode;
     }
 
     return this.skills;
@@ -70,6 +78,9 @@ export class SkillLoader {
         const config = JSON.parse(fs.readFileSync(this.configFile, 'utf8'));
         if (config.disabledSkills && Array.isArray(config.disabledSkills)) {
           this.disabledSkills = new Set(config.disabledSkills);
+        }
+        if (config.skillModes && typeof config.skillModes === 'object') {
+          this.skillModes = config.skillModes;
         }
       }
     } catch (err) {
@@ -92,11 +103,23 @@ export class SkillLoader {
 
   _parseSkillMd(raw, filePath) {
     try {
-      const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+      const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
       if (!fmMatch) {
-        // No frontmatter — try to use filename as name
+        // No frontmatter — derive name from dir, and a clean description from body
         const name = path.basename(path.dirname(filePath));
-        return { meta: { name, description: raw.slice(0, 100) }, content: raw };
+        const lines = raw.split(/\r?\n/);
+        let heading = '';
+        let desc = '';
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+          if (/^(---|\*\*\*|___)$/.test(t)) continue; // 跳过分隔线
+          if (t.startsWith('# ')) { if (!heading) heading = t.slice(2).trim(); }
+          else if (!t.startsWith('#')) { if (!desc) desc = t; }
+          if (heading && desc) break;
+        }
+        const description = (desc || heading || raw).replace(/\s+/g, ' ').slice(0, 200).trim();
+        return { meta: { name, description }, content: raw };
       }
 
       const meta = yaml.load(fmMatch[1]) || {};
@@ -115,6 +138,7 @@ export class SkillLoader {
       description: s.meta.description,
       path: s.path,
       enabled: s.enabled,
+      mode: s.mode || 'both',
     }));
   }
   
@@ -131,6 +155,41 @@ export class SkillLoader {
     const skill = this.skills.get(name);
     if (!skill || !skill.enabled) return null;
     return skill.content;
+  }
+  
+  getIconPath(name) {
+    const skill = this.skills.get(name);
+    if (!skill) return null;
+    const dir = path.dirname(skill.path);
+    const candidates = ['icon.png', 'icon.svg', 'icon.jpg', 'icon.jpeg', 'icon.webp'];
+    for (const c of candidates) {
+      const p = path.join(dir, c);
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+  
+  getMode(name) {
+    const skill = this.skills.get(name);
+    if (!skill) return null;
+    return skill.mode || 'both';
+  }
+  
+  setMode(name, mode) {
+    const skill = this.skills.get(name);
+    if (!skill) return;
+    skill.mode = mode;
+    try {
+      let config = {};
+      if (fs.existsSync(this.configFile)) {
+        config = JSON.parse(fs.readFileSync(this.configFile, 'utf8'));
+      }
+      config.skillModes = config.skillModes || {};
+      config.skillModes[name] = mode;
+      fs.writeFileSync(this.configFile, JSON.stringify(config, null, 2));
+    } catch (err) {
+      console.error('[SkillLoader] Failed to save mode:', err.message);
+    }
   }
   
   getSearchPaths() {
