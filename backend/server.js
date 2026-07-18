@@ -21,7 +21,12 @@ import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHE
 import { registry as toolRegistry } from './tool-registry.js';
 import { SingleAgentTurnKernel, buildSendWire } from './agent-kernel.js';
 import { SubAgentManager } from './subagent.js';
+import { SubAgentSessionStore } from './subagent-session-store.js';
 import { MCPClient, registerMCPTools } from './mcp-client.js';
+import { AgentTemplateStore } from './agent-template-store.js';
+import { RosterTemplateStore } from './roster-template-store.js';
+import { ModeTemplateStore } from './mode-template-store.js';
+import { runDiscussion } from './discussion-manager.js';
 import { truncateToolResult, estimateWireTokens } from './context-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 import { PermissionManager } from './permission-manager.js';
@@ -232,6 +237,29 @@ await agentsMdLoader.load();
 // 共享回合内核（main / 子 agent 共用）
 const agentKernel = new SingleAgentTurnKernel();
 
+// 子 Agent 会话持久化库（JSON 文件，替代 qaimodelbuilder 的 SQLite chat_subagent_session）
+const subAgentSessionStore = new SubAgentSessionStore();
+
+// 子 Agent 会话状态变化 → 广播给所有客户端（多客户端 fan-out）
+function broadcastSubAgentSession(summary) {
+  const msg = JSON.stringify(summary);
+  if (typeof wss !== 'undefined' && wss && wss.clients) {
+    wss.clients.forEach((c) => {
+      if (c.readyState === c.OPEN) c.send(msg);
+    });
+  }
+}
+
+// 通用广播：把任意对象帧发给所有 WS 客户端（resume 实时进度用）
+function broadcastToAll(data) {
+  const msg = JSON.stringify(data);
+  if (typeof wss !== 'undefined' && wss && wss.clients) {
+    wss.clients.forEach((c) => {
+      if (c.readyState === c.OPEN) c.send(msg);
+    });
+  }
+}
+
 // 子 Agent 管理器：主 Agent 通过 `agent` 工具派生子 Agent（深度限制 + 并行 + profile）
 const subAgentManager = new SubAgentManager({
   createLLM: (cfg) => new LLMAdapter(cfg),
@@ -240,7 +268,47 @@ const subAgentManager = new SubAgentManager({
   skillLoader,
   agentsMdLoader,
   llmConfig: { provider: 'openrouter', apiKey: '', model: '', baseURL: 'https://openrouter.ai/api/v1' },
+  sessionStore: subAgentSessionStore,
+  onSessionUpdate: broadcastSubAgentSession,
 });
+
+// ── 子 Agent 唤醒/续跑（resume/wake）共享执行器 ──
+// 设置子 Agent 同源 LLM 配置后，迭代 resumeEvents 并把每个 subagent_* 事件
+// （已带 session_id）广播给所有客户端，供前端实时续显。
+async function runResume(sessionId, prompt, ownerTabId) {
+  const cfg = loadConfig();
+  subAgentManager.llmConfig = {
+    provider: cfg.provider || 'openrouter',
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    baseURL:
+      cfg.provider === 'openrouter'
+        ? (cfg.baseURL || 'https://openrouter.ai/api/v1')
+        : (cfg.baseURL || undefined),
+  };
+  for await (const ev of subAgentManager.resumeEvents({ sessionId, prompt, ownerTabId })) {
+    broadcastToAll(ev);
+  }
+}
+
+// ── 用户接管后续跑（user take-over：手动发消息）共享执行器 ──
+// 与 runResume 同源，仅把 resumeEvents 的 mode 置为 'user_message'，
+// 完成后会话保持 USER_OWNED，支持用户在面板里持续对话。
+async function runUserMessage(sessionId, prompt, ownerTabId) {
+  const cfg = loadConfig();
+  subAgentManager.llmConfig = {
+    provider: cfg.provider || 'openrouter',
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    baseURL:
+      cfg.provider === 'openrouter'
+        ? (cfg.baseURL || 'https://openrouter.ai/api/v1')
+        : (cfg.baseURL || undefined),
+  };
+  for await (const ev of subAgentManager.resumeEvents({ sessionId, prompt, ownerTabId, mode: 'user_message' })) {
+    broadcastToAll(ev);
+  }
+}
 
 // MCP 客户端集合（按需从配置连接；默认无 → 不连接）
 const mcpClients = new Map(); // name -> MCPClient
@@ -256,6 +324,13 @@ function defaultLlmConfig() {
   };
 }
 subAgentManager.llmConfig = defaultLlmConfig();
+
+// Agent 模板库（JSON 文件持久化，替代 qaimodelbuilder 的 SQLite chat_agent_template）
+const agentTemplateStore = new AgentTemplateStore();
+
+// 讨论模式 / 多 Agent 编排模板库（roster=谁参与, mode=怎么协作）
+const rosterTemplateStore = new RosterTemplateStore();
+const modeTemplateStore = new ModeTemplateStore();
 
 // 动态构建完整的 OpenAI 函数调用工具 schema（含本地工具 + agent + skill + mcp）
 function toOpenAIParams(parameters) {
@@ -302,6 +377,320 @@ async function initMCP() {
 }
 // 延迟连接，不阻塞启动
 initMCP().catch((e) => console.error('[MCP] init error:', e.message));
+
+// ============================================================
+// Agent Templates REST API（移植自 qaimodelbuilder _agent.py）
+// 轻量级 JSON 持久化，与前端 Agent 模板面板对接
+// ============================================================
+
+app.get('/api/chat/agent-templates', (_req, res) => {
+  try {
+    const items = agentTemplateStore.list().map((r) => agentTemplateStore.toWire(r));
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/agent-templates', (req, res) => {
+  try {
+    const rec = agentTemplateStore.create(req.body);
+    res.status(201).json(agentTemplateStore.toWire(rec));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/chat/agent-templates/:id', (req, res) => {
+  try {
+    const rec = agentTemplateStore.update(req.params.id, req.body);
+    res.json(agentTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else if (err.message.includes('built-in')) res.status(400).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/chat/agent-templates/:id', (req, res) => {
+  try {
+    agentTemplateStore.delete(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else if (err.message.includes('built-in')) res.status(400).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/agent-templates/:id/clone', (req, res) => {
+  try {
+    const rec = agentTemplateStore.clone(req.params.id);
+    res.status(201).json(agentTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/agent-templates/:id/reset', (req, res) => {
+  try {
+    const rec = agentTemplateStore.reset(req.params.id);
+    res.json(agentTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/agent-templates/:id/apply', (req, res) => {
+  try {
+    const applied = agentTemplateStore.apply(req.params.id);
+    res.json({ applied });
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// Sub-Agent Sessions REST API（子 Agent 会话持久化 + 独立中断）
+// ============================================================
+// 列表：可按 root_conversation_id（= 主会话/父 tab id）过滤，缺省返回全部
+app.get('/api/chat/subagents', (req, res) => {
+  try {
+    const root = req.query.root_conversation_id || req.query.session_id;
+    const items = root
+      ? subAgentSessionStore.listByRootConversation(root)
+      : subAgentSessionStore.listAll();
+    // 摘要列表不含完整 messages（详情端点才带 transcript）
+    res.json({ items: items.map((s) => subAgentSessionStore.toSummary(s)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 详情：带完整结构化 transcript（messages）
+app.get('/api/chat/subagents/:id', (req, res) => {
+  try {
+    const session = subAgentSessionStore.get(req.params.id);
+    res.json({ session: subAgentSessionStore.toDetail(session) });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') res.status(404).json({ error: err.message });
+    else res.status(500).json({ error: err.message });
+  }
+});
+
+// 独立中断某条子 Agent 会话（只停它自己，不影响主 Agent/其他子 Agent）
+app.post('/api/chat/subagents/:id/interrupt', (req, res) => {
+  try {
+    // 解析会话（404 on miss，幂等）
+    subAgentSessionStore.get(req.params.id);
+    const aborted = subAgentManager._abortRegistry.abort(req.params.id);
+    res.json({ ok: true, aborted });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') res.status(404).json({ error: err.message });
+    else res.status(500).json({ error: err.message });
+  }
+});
+
+// 设置子 Agent 自己的模型（预算分母真值源；不影响主 Agent）
+app.patch('/api/chat/subagents/:id', (req, res) => {
+  try {
+    const session = subAgentSessionStore.get(req.params.id);
+    const { model_id, model_provider } = req.body || {};
+    subAgentSessionStore.setModel(session, model_id ?? null, model_provider ?? null);
+    subAgentSessionStore.save(session);
+    res.json({ session: subAgentSessionStore.toDetail(session) });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+// 删除单条子 Agent 会话
+app.delete('/api/chat/subagents/:id', (req, res) => {
+  try {
+    subAgentSessionStore.delete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') res.status(404).json({ error: err.message });
+    else res.status(500).json({ error: err.message });
+  }
+});
+
+// 唤醒/续跑（resume/wake）：从已持久化的 transcript 断点继续。
+// 立即返回受理状态，实际续跑在后台进行，进度经 WS 广播 subagent_* 事件。
+app.post('/api/chat/subagents/:id/resume', (req, res) => {
+  try {
+    const session = subAgentManager._sessionStore.find(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'sub-agent session not found' });
+    }
+    const { prompt } = req.body || {};
+    res.json({ ok: true, session_id: req.params.id, status: 'resuming' });
+    // 后台续跑（不 await：进度经 WS 广播；异常兜底广播 error 帧）
+    runResume(req.params.id, prompt || '', session.root_conversation_id || null).catch((e) => {
+      broadcastToAll({ type: 'subagent_error', message: e.message, session_id: req.params.id });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 用户接管（user take-over）：把会话翻转为 USER_OWNED，允许用户在面板里手动发消息
+app.post('/api/chat/subagents/:id/takeover', (req, res) => {
+  try {
+    const summary = subAgentManager.takeOver(req.params.id);
+    if (!summary) return res.status(404).json({ error: 'sub-agent session not found' });
+    res.json({ ok: true, session: summary });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 用户接管后续跑（手动发消息）：在 USER_OWNED（或可续跑）状态下，用户直接给子 Agent 发一条消息
+app.post('/api/chat/subagents/:id/message', (req, res) => {
+  try {
+    const session = subAgentManager._sessionStore.find(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'sub-agent session not found' });
+    }
+    const { prompt } = req.body || {};
+    if (!prompt || !String(prompt).trim()) {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
+    res.json({ ok: true, session_id: req.params.id, status: 'responding' });
+    // 后台续跑（不 await：进度经 WS 广播；异常兜底广播 error 帧）
+    runUserMessage(req.params.id, String(prompt).trim(), session.root_conversation_id || null).catch((e) => {
+      broadcastToAll({ type: 'subagent_error', message: e.message, session_id: req.params.id });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// Roster Templates REST API（讨论团队：谁参与）
+// ============================================================
+app.get('/api/chat/roster-templates', (_req, res) => {
+  try {
+    const items = rosterTemplateStore.list().map((r) => rosterTemplateStore.toWire(r));
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/roster-templates', (req, res) => {
+  try {
+    const rec = rosterTemplateStore.create(req.body);
+    res.status(201).json(rosterTemplateStore.toWire(rec));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/chat/roster-templates/:id', (req, res) => {
+  try {
+    const rec = rosterTemplateStore.update(req.params.id, req.body);
+    res.json(rosterTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/chat/roster-templates/:id', (req, res) => {
+  try {
+    rosterTemplateStore.delete(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/roster-templates/:id/clone', (req, res) => {
+  try {
+    const rec = rosterTemplateStore.clone(req.params.id);
+    res.status(201).json(rosterTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/roster-templates/:id/reset', (req, res) => {
+  try {
+    const rec = rosterTemplateStore.reset(req.params.id);
+    res.json(rosterTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// Mode Templates REST API（协作模式：怎么协作）
+// ============================================================
+app.get('/api/chat/mode-templates', (_req, res) => {
+  try {
+    const items = modeTemplateStore.list().map((r) => modeTemplateStore.toWire(r));
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/mode-templates', (req, res) => {
+  try {
+    const rec = modeTemplateStore.create(req.body);
+    res.status(201).json(modeTemplateStore.toWire(rec));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.patch('/api/chat/mode-templates/:id', (req, res) => {
+  try {
+    const rec = modeTemplateStore.update(req.params.id, req.body);
+    res.json(modeTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/chat/mode-templates/:id', (req, res) => {
+  try {
+    modeTemplateStore.delete(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/mode-templates/:id/clone', (req, res) => {
+  try {
+    const rec = modeTemplateStore.clone(req.params.id);
+    res.status(201).json(modeTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/chat/mode-templates/:id/reset', (req, res) => {
+  try {
+    const rec = modeTemplateStore.reset(req.params.id);
+    res.json(modeTemplateStore.toWire(rec));
+  } catch (err) {
+    if (err.message.includes('not found')) res.status(404).json({ error: err.message });
+    else res.status(400).json({ error: err.message });
+  }
+});
 
 // ============================================================
 // WebSocket sessions
@@ -697,7 +1086,12 @@ wss.on('connection', (ws) => {
     } else if (msg.type === 'stop') {
       // Set stop flag for this session
       session.stopRequested = true;
+      // 级联取消：显式 signal 该会话派生出的所有运行中子 Agent（State-Truth-First）
+      const cascaded = subAgentManager._abortRegistry.abortByOwnerTab(session.id);
       broadcast(ws, { type: 'stopped', message: 'Task stopped by user' });
+      if (cascaded.length > 0) {
+        broadcast(ws, { type: 'subagents_cascaded_abort', ids: cascaded });
+      }
     } else if (msg.type === 'restart') {
       // Request graceful restart (daemon will handle this)
       broadcast(ws, { type: 'restarting', message: 'Server restarting...' });
@@ -727,6 +1121,18 @@ wss.on('connection', (ws) => {
       if (!handled) {
         broadcast(ws, { type: 'error', message: `Approval request ${id} not found` });
       }
+    } else if (msg.type === 'apply_agent_template') {
+      // 将某个 Agent 模板注入当前会话（作为追加 system prompt）
+      try {
+        const applied = agentTemplateStore.apply(msg.template_id);
+        const roleText = applied.display_name || applied.name;
+        const persona = applied.persona || '';
+        const systemAddendum = `Applied agent role: ${roleText}${persona ? '\n\n' + persona : ''}`;
+        session.history.push({ role: 'system', content: systemAddendum });
+        broadcast(ws, { type: 'agent_template_applied', applied });
+      } catch (err) {
+        broadcast(ws, { type: 'error', message: err.message });
+      }
     } else if (msg.type === 'init_agents_md') {
       // Initialize AGENTS.md template
       const result = await agentsMdLoader.init();
@@ -735,6 +1141,49 @@ wss.on('connection', (ws) => {
       // Reload AGENTS.md from disk
       await agentsMdLoader.load();
       broadcast(ws, { type: 'agents_md_reloaded', summary: agentsMdLoader.getSummary() });
+    } else if (msg.type === 'start_discussion') {
+      // 启动一次多 Agent 讨论（移植自 qaimodelbuilder 讨论编排）
+      await handleStartDiscussion(ws, session, msg);
+    } else if (msg.type === 'resume_subagent') {
+      // 唤醒/续跑一个已持久化的子 Agent 会话（断点续跑）
+      const { session_id, prompt } = msg;
+      if (!session_id) {
+        broadcast(ws, { type: 'error', message: 'resume_subagent requires session_id' });
+      } else {
+        // 后台续跑：进度经 WS 广播给所有客户端（不阻塞当前消息处理）
+        runResume(session_id, prompt || '', session.id || null).catch((e) => {
+          broadcastToAll({ type: 'subagent_error', message: e.message, session_id });
+        });
+      }
+    } else if (msg.type === 'take_over_subagent') {
+      // 用户接管：把子 Agent 会话翻转为 USER_OWNED（同步状态翻转）
+      const { session_id } = msg;
+      if (!session_id) {
+        broadcast(ws, { type: 'error', message: 'take_over_subagent requires session_id' });
+      } else {
+        try {
+          const summary = subAgentManager.takeOver(session_id);
+          if (!summary) {
+            broadcast(ws, { type: 'error', message: 'sub-agent session not found' });
+          } else {
+            // takeOver 已通过 _emitSessionUpdate 广播 subagent_session_updated
+            broadcast(ws, { type: 'take_over_ack', session_id, session: summary });
+          }
+        } catch (e) {
+          broadcast(ws, { type: 'error', message: e.message });
+        }
+      }
+    } else if (msg.type === 'user_message_subagent') {
+      // 用户手动发消息（user take-over 续跑）：用户在面板里直接给子 Agent 发指令
+      const { session_id, prompt } = msg;
+      if (!session_id || !prompt || !String(prompt).trim()) {
+        broadcast(ws, { type: 'error', message: 'user_message_subagent requires session_id and non-empty prompt' });
+      } else {
+        // 后台续跑：进度经 WS 广播给所有客户端（不阻塞当前消息处理）
+        runUserMessage(session_id, String(prompt).trim(), session.id || null).catch((e) => {
+          broadcastToAll({ type: 'subagent_error', message: e.message, session_id });
+        });
+      }
     }
   });
 
@@ -1029,6 +1478,112 @@ async function runSkillTool(args, callId) {
   const body = `--- SKILL: ${injected.name} ---\n${injected.content}` +
     (injected.hasMore ? `\n\n[This skill has more pages; call skill with page=${injected.page + 1} to continue]` : '');
   return { partial: false, callId, toolName: 'skill', resultText: body, ok: true, durationMs: Date.now() - start };
+}
+
+// ── 讨论启动（多 Agent 编排入口） ──
+async function handleStartDiscussion(ws, session, msg) {
+  const topic = (msg.topic || '').trim();
+  if (!topic) {
+    broadcast(ws, { type: 'error', message: 'Discussion requires a topic' });
+    return;
+  }
+
+  // 解析 roster（优先内联 members，否则从 roster_template_id 取）
+  let roster = null;
+  if (Array.isArray(msg.roster) && msg.roster.length > 0) {
+    roster = msg.roster.map((m) => ({
+      display_name: m.display_name || m.name || 'Speaker',
+      model_id: m.model_id || null,
+      persona: m.persona || null,
+      config: m.config || {},
+    }));
+  } else if (msg.roster_template_id) {
+    try {
+      const tpl = rosterTemplateStore.get(msg.roster_template_id);
+      roster = tpl.members.map((m) => ({
+        display_name: m.display_name,
+        model_id: m.model_id,
+        persona: m.persona,
+        config: m.config || {},
+      }));
+    } catch (err) {
+      broadcast(ws, { type: 'error', message: `roster template: ${err.message}` });
+      return;
+    }
+  }
+
+  if (!roster || roster.length === 0) {
+    broadcast(ws, { type: 'error', message: 'Discussion requires a roster (members or roster_template_id)' });
+    return;
+  }
+
+  // 解析 mode（优先内联 mode，否则从 mode_template_id 取）
+  let mode = null;
+  if (msg.mode && typeof msg.mode === 'object') {
+    mode = {
+      name: msg.mode.name || 'custom',
+      framing: msg.mode.framing || '',
+      tool_policy: msg.mode.tool_policy || { default: 'allow', tools: {} },
+      flow_policy: msg.mode.flow_policy || { speaker_strategy: 'round_robin', max_rounds: 8, judge_enabled: true },
+      hard_constraints: msg.mode.hard_constraints || { max_chars_per_turn: null, max_seconds_per_turn: null },
+    };
+  } else if (msg.mode_template_id) {
+    try {
+      const tpl = modeTemplateStore.get(msg.mode_template_id);
+      mode = {
+        name: tpl.name,
+        framing: tpl.framing,
+        tool_policy: tpl.tool_policy,
+        flow_policy: tpl.flow_policy,
+        hard_constraints: tpl.hard_constraints,
+      };
+    } catch (err) {
+      broadcast(ws, { type: 'error', message: `mode template: ${err.message}` });
+      return;
+    }
+  }
+
+  if (!mode) {
+    broadcast(ws, { type: 'error', message: 'Discussion requires a mode (mode or mode_template_id)' });
+    return;
+  }
+
+  // 允许前端覆盖 max_rounds
+  if (msg.max_rounds) {
+    const mr = parseInt(msg.max_rounds, 10);
+    if (!Number.isNaN(mr) && mr > 0) mode.flow_policy = { ...mode.flow_policy, max_rounds: mr };
+  }
+
+  const cfg = { ...loadConfig(), ...session.config };
+  if (cfg.provider !== 'local' && !cfg.apiKey) {
+    broadcast(ws, { type: 'error', message: 'No API key configured. Please set your API key in Settings.' });
+    return;
+  }
+
+  const llmConfig = {
+    provider: cfg.provider || 'qgenie',
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    baseURL: cfg.provider === 'openrouter'
+      ? (cfg.baseURL || 'https://openrouter.ai/api/v1')
+      : cfg.baseURL || undefined,
+  };
+  const llm = new LLMAdapter(llmConfig);
+
+  try {
+    await runDiscussion({
+      ws,
+      session,
+      llm,
+      topic,
+      roster,
+      mode,
+      config: cfg,
+      broadcast: (data) => broadcast(ws, data),
+    });
+  } catch (err) {
+    broadcast(ws, { type: 'error', message: err.message });
+  }
 }
 
 // ── KernelEvent → WebSocket 帧 ──

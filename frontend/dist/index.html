@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agent WebUI</title>
+  <title>MyAgent</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     /* ── Reset & Base ───────────────────────────────────── */
@@ -73,7 +73,8 @@
       font-size: 1.125rem; font-weight: 700; color: var(--accent2);
       display: flex; align-items: center; gap: 8px;
     }
-    #topbar .logo svg { width: 24px; height: 24px; }
+    #topbar .logo svg,
+    #topbar .logo img { width: 26px; height: 26px; object-fit: contain; }
     #topbar .status-dot {
       width: 8px; height: 8px; border-radius: 50%;
       background: var(--text3); margin-left: auto;
@@ -885,6 +886,313 @@
     font-size: 0.9375rem;
     color: var(--yellow);
   }
+
+  /* Agent Templates */
+  .agent-template-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--bg3);
+  }
+  .agent-template-item.builtin {
+    border-left: 3px solid var(--accent);
+    opacity: 0.95;
+  }
+  .agent-template-item h4 {
+    font-size: 0.8125rem;
+    margin: 0 0 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .agent-template-item p {
+    font-size: 0.6875rem;
+    color: var(--text2);
+    margin: 0 0 6px 0;
+    line-height: 1.4;
+  }
+  .agent-template-meta {
+    font-size: 0.625rem;
+    color: var(--text3);
+    margin-bottom: 6px;
+  }
+  .agent-template-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .agent-template-actions button {
+    padding: 3px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg4);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.6875rem;
+  }
+  .agent-template-actions button:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .agent-template-actions button.apply {
+    background: var(--green);
+    border-color: var(--green);
+    color: #000;
+  }
+  .agent-template-actions button.danger {
+    background: var(--red);
+    border-color: var(--red);
+    color: #000;
+  }
+  .agent-template-badge {
+    font-size: 0.5625rem;
+    padding: 1px 5px;
+    border-radius: 10px;
+    background: var(--bg4);
+    color: var(--text3);
+    border: 1px solid var(--border);
+  }
+
+  /* ── Discussion (multi-agent) ── */
+  .roster-template-item, .mode-template-item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: var(--bg2);
+  }
+  .roster-template-item.builtin, .mode-template-item.builtin {
+    border-left: 3px solid var(--accent);
+  }
+  .roster-template-item h4, .mode-template-item h4 {
+    margin: 0 0 4px 0;
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .roster-template-item p, .mode-template-item p {
+    margin: 0 0 8px 0;
+    font-size: 0.75rem;
+    color: var(--text2);
+  }
+  .roster-template-actions, .mode-template-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .roster-template-actions button, .mode-template-actions button {
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.6875rem;
+  }
+  .roster-template-actions button.apply, .mode-template-actions button.apply {
+    border-color: var(--accent);
+    color: var(--accent2);
+  }
+  .roster-template-actions button.danger, .mode-template-actions button.danger {
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .roster-member-row {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 8px;
+    background: var(--bg2);
+  }
+  .roster-member-row input, .roster-member-row textarea {
+    width: 100%;
+    padding: 5px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.75rem;
+    margin-top: 4px;
+  }
+
+  /* discussion transcript bubbles */
+  .discussion-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 10px 0;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+  .discussion-round-header {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text2);
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+  }
+  .discussion-speaker {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .discussion-speaker:last-child { border-bottom: none; }
+  .discussion-speaker-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .discussion-speaker-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .discussion-speaker-body {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    color: var(--text);
+  }
+  .discussion-speaker.convergence {
+    background: linear-gradient(90deg, rgba(120,120,255,0.08), transparent);
+  }
+  .discussion-summary {
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    margin: 12px 0;
+    padding: 12px;
+    background: var(--bg2);
+  }
+  .discussion-summary h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.875rem;
+    color: var(--accent2);
+  }
+
+  /* sub-agent session cards */
+  .subagent-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: var(--bg2);
+  }
+  .subagent-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .subagent-type {
+    font-weight: 600;
+    font-size: 0.75rem;
+  }
+  .badge {
+    font-size: 0.5625rem;
+    padding: 1px 6px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge-running { background: #1f6feb22; color: #1f6feb; border-color: #1f6feb55; }
+  .badge-done { background: #2da44e22; color: #2da44e; border-color: #2da44e55; }
+  .badge-error { background: #cf222e22; color: #cf222e; border-color: #cf222e55; }
+  .badge-interrupted { background: #bf870022; color: #bf8700; border-color: #bf870055; }
+  .badge-user_owned { background: #8250df22; color: #8250df; border-color: #8250df55; }
+
+  /* ── 用户接管态视觉强化（USER_OWNED） ── */
+  /* 列表卡片：紫色左边框 + 淡紫渐变底 + 柔光，明显区别于自动 resume（done） */
+  .subagent-card.owned {
+    border-left: 3px solid #8250df;
+    background: linear-gradient(90deg, #8250df14, var(--bg2) 45%);
+    box-shadow: 0 0 0 1px #8250df33, 0 1px 5px #8250df22;
+  }
+  .subagent-card.owned .subagent-type { color: #8250df; }
+  /* 实心紫徽章，强调"已被用户接管" */
+  .badge-owned {
+    background: #8250df;
+    color: #fff;
+    border-color: #8250df;
+    font-weight: 700;
+  }
+  /* 卡片头部内联"👤 用户接管"标签 */
+  .owned-tag {
+    font-size: 0.5625rem;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: #8250df22;
+    color: #8250df;
+    border: 1px solid #8250df55;
+    letter-spacing: 0.02em;
+  }
+  /* 详情抽屉顶部的接管态标识条 */
+  #subagent-owned-strip {
+    display: none;
+    font-size: 0.6875rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+    gap: 6px;
+    line-height: 1.4;
+  }
+  #subagent-owned-strip.owned { background: #8250df18; border: 1px solid #8250df44; color: #8250df; }
+  #subagent-owned-strip.resumed { background: #2da44e18; border: 1px solid #2da44e44; color: #2da44e; }
+  .subagent-preview {
+    font-size: 0.6875rem;
+    color: var(--text2);
+    margin: 4px 0 6px 0;
+    line-height: 1.35;
+    max-height: 2.7em;
+    overflow: hidden;
+  }
+  .subagent-meta {
+    font-size: 0.625rem;
+    color: var(--text3);
+    margin-bottom: 6px;
+  }
+  .subagent-actions { display: flex; gap: 6px; }
+  .subagent-actions button {
+    flex: 1;
+    padding: 5px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.6875rem;
+  }
+  .subagent-actions button.danger { border-color: #cf222e55; color: #cf222e; }
+  .subagent-msg {
+    padding: 5px 7px;
+    border-radius: 6px;
+    margin-bottom: 5px;
+    background: var(--bg3);
+    border-left: 3px solid var(--border);
+  }
+  .subagent-msg.system { border-left-color: #8250df; }
+  .subagent-msg.user { border-left-color: #1f6feb; }
+  .subagent-msg.assistant { border-left-color: #2da44e; }
+  .subagent-msg.tool { border-left-color: #bf8700; }
+  .subagent-msg-role {
+    font-size: 0.5625rem;
+    text-transform: uppercase;
+    color: var(--text3);
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .subagent-msg-text {
+    font-size: 0.6875rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 12em;
+    overflow: auto;
+  }
   </style>
 </head>
 <body>
@@ -892,11 +1200,8 @@
   <!-- Topbar -->
   <header id="topbar">
     <div class="logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-        <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
-      </svg>
-      Agent WebUI
+      <img src="assets/myAgent.png" alt="MyAgent" />
+      MyAgent
     </div>
     <span id="provider-badge" class="provider-badge">OpenAI</span>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
@@ -932,6 +1237,18 @@
         <button class="nav-btn" onclick="togglePanel('settings')" id="nav-btn-settings">
           <span class="nav-btn-icon">⚙️</span>
           <span class="nav-btn-text">Settings</span>
+        </button>
+        <button class="nav-btn" onclick="togglePanel('agents')" id="nav-btn-agents">
+          <span class="nav-btn-icon">🤖</span>
+          <span class="nav-btn-text">Agents</span>
+        </button>
+        <button class="nav-btn" onclick="togglePanel('discussion')" id="nav-btn-discussion">
+          <span class="nav-btn-icon">💬</span>
+          <span class="nav-btn-text">Discussion</span>
+        </button>
+        <button class="nav-btn" onclick="togglePanel('subagents')" id="nav-btn-subagents">
+          <span class="nav-btn-icon">🧩</span>
+          <span class="nav-btn-text">Sub-Agents</span>
         </button>
       </div>
     </div>
@@ -1106,8 +1423,211 @@
       </div>
         </div>
       </div>
+
+      <!-- Agents panel -->
+      <div class="slide-panel" id="panel-agents">
+        <div class="panel-header">
+          <h3>Agent Templates</h3>
+          <button onclick="closePanel('agents')" class="panel-close-btn">✕</button>
+        </div>
+        <div class="panel-content" style="overflow-y:auto">
+          <div id="agents-list-view">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <span style="font-size: 0.6875rem;color:var(--text2)">Manage reusable agent roles</span>
+              <button onclick="showAgentTemplateForm()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--accent2);cursor:pointer;font-size: 0.6875rem;font-weight:600">
+                + Create
+              </button>
+            </div>
+            <div id="agent-templates-list">
+              <div style="padding:20px;text-align:center;color:var(--text3);font-size: 0.75rem">
+                Loading agent templates...
+              </div>
+            </div>
+          </div>
+
+          <div id="agent-template-form" style="display:none">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <button onclick="backToAgentTemplatesList()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-size: 0.75rem">← Back</button>
+              <span id="agent-template-form-title" style="font-weight:600;font-size:0.875rem">Create Agent Template</span>
+            </div>
+            <input type="hidden" id="agent-template-form-id" />
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Name (ID)</label>
+              <input type="text" id="agent-template-name" placeholder="e.g. code_reviewer" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Display Name</label>
+              <input type="text" id="agent-template-display-name" placeholder="e.g. Code Reviewer" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Description</label>
+              <input type="text" id="agent-template-description" placeholder="Short summary..." style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Model ID (optional)</label>
+              <input type="text" id="agent-template-model-id" placeholder="Inherit from main chat" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Persona / System Prompt</label>
+              <textarea id="agent-template-persona" rows="6" placeholder="Describe the role and behavior..." style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem;resize:vertical"></textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Allowed Tools (comma-separated)</label>
+              <input type="text" id="agent-template-allowed-tools" placeholder="file_read, file_grep, shell_execute" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Enabled Skills (comma-separated)</label>
+              <input type="text" id="agent-template-enabled-skills" placeholder="skill-name-1, skill-name-2" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.75rem">Color (optional palette index)</label>
+              <input type="number" id="agent-template-color" min="0" placeholder="0" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div style="display:flex;gap:8px;margin-top:14px">
+              <button onclick="saveAgentTemplate()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.75rem">Save</button>
+              <button onclick="backToAgentTemplatesList()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:0.75rem">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Discussion panel -->
+      <div class="slide-panel" id="panel-discussion">
+        <div class="panel-header">
+          <h3>Discussion / Multi-Agent</h3>
+          <button onclick="closePanel('discussion')" class="panel-close-btn">✕</button>
+        </div>
+        <div class="panel-content" style="overflow-y:auto">
+          <!-- Start launcher -->
+          <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px;background:var(--bg2)">
+            <div style="font-weight:600;font-size:0.8125rem;margin-bottom:8px">Start a discussion</div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:0.6875rem">Roster (team)</label>
+              <select id="discussion-roster" style="width:100%;padding:5px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.75rem"></select>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:0.6875rem">Mode (how to collaborate)</label>
+              <select id="discussion-mode" style="width:100%;padding:5px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.75rem"></select>
+            </div>
+            <div class="form-group" style="margin-bottom:8px">
+              <label style="font-size:0.6875rem">Max rounds</label>
+              <input type="number" id="discussion-max-rounds" min="1" max="20" value="3" style="width:100%;padding:5px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.75rem" />
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+              <label style="font-size:0.6875rem">Topic</label>
+              <textarea id="discussion-topic" rows="3" placeholder="What should the agents discuss?" style="width:100%;padding:5px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.75rem;resize:vertical"></textarea>
+            </div>
+            <button onclick="startDiscussion()" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.75rem;font-weight:600">▶ Start Discussion</button>
+          </div>
+
+          <!-- Tabs -->
+          <div style="display:flex;gap:6px;margin-bottom:10px">
+            <button onclick="showDiscussionTab('roster')" id="discussion-tab-roster-btn" style="flex:1;padding:5px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.6875rem;font-weight:600">Roster Templates</button>
+            <button onclick="showDiscussionTab('mode')" id="discussion-tab-mode-btn" style="flex:1;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:0.6875rem">Mode Templates</button>
+          </div>
+
+          <!-- Roster tab -->
+          <div id="discussion-tab-roster">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-size:0.6875rem;color:var(--text2)">Teams (who participates)</span>
+              <button onclick="showRosterTemplateForm()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--accent2);cursor:pointer;font-size:0.6875rem;font-weight:600">+ Create</button>
+            </div>
+            <div id="roster-templates-list"><div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">Loading...</div></div>
+          </div>
+
+          <!-- Mode tab -->
+          <div id="discussion-tab-mode" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-size:0.6875rem;color:var(--text2)">Collaboration modes (how)</span>
+              <button onclick="showModeTemplateForm()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--accent2);cursor:pointer;font-size:0.6875rem;font-weight:600">+ Create</button>
+            </div>
+            <div id="mode-templates-list"><div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">Loading...</div></div>
+          </div>
+
+          <!-- Roster form (hidden) -->
+          <div id="roster-template-form" style="display:none">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <button onclick="backToRosterTemplatesList()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:0.75rem">← Back</button>
+              <span id="roster-template-form-title" style="font-weight:600;font-size:0.875rem">Create Roster Template</span>
+            </div>
+            <input type="hidden" id="roster-template-form-id" />
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Name (ID)</label><input type="text" id="roster-template-name" placeholder="e.g. arch_team" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" /></div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Description</label><input type="text" id="roster-template-description" placeholder="Short summary..." style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" /></div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Default Mode (optional)</label><input type="text" id="roster-template-default-mode" placeholder="mode template id, e.g. builtin-review" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" /></div>
+            <div id="roster-members-editor" style="margin-bottom:8px"></div>
+            <button onclick="addRosterMemberRow()" style="padding:4px 8px;border-radius:6px;border:1px dashed var(--border);background:none;color:var(--accent2);cursor:pointer;font-size:0.75rem;margin-bottom:10px">+ Add member</button>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button onclick="saveRosterTemplate()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.75rem">Save</button>
+              <button onclick="backToRosterTemplatesList()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:0.75rem">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Mode form (hidden) -->
+          <div id="mode-template-form" style="display:none">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <button onclick="backToModeTemplatesList()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:0.75rem">← Back</button>
+              <span id="mode-template-form-title" style="font-weight:600;font-size:0.875rem">Create Mode Template</span>
+            </div>
+            <input type="hidden" id="mode-template-form-id" />
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Name (ID)</label><input type="text" id="mode-template-name" placeholder="e.g. review" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" /></div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Description</label><input type="text" id="mode-template-description" placeholder="Short summary..." style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" /></div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Framing (how to collaborate)</label><textarea id="mode-template-framing" rows="4" placeholder="Prose describing the collaboration style..." style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem;resize:vertical"></textarea></div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Speaker strategy</label>
+              <select id="mode-template-speaker-strategy" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem">
+                <option value="round_robin">round_robin</option>
+                <option value="manager">manager</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Max rounds</label><input type="number" id="mode-template-max-rounds" min="1" max="1000" value="8" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem" /></div>
+            <div class="form-group" style="margin-bottom:8px"><label style="font-size:0.75rem">Judge / convergence enabled</label>
+              <select id="mode-template-judge" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button onclick="saveModeTemplate()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.75rem">Save</button>
+              <button onclick="backToModeTemplatesList()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text);cursor:pointer;font-size:0.75rem">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
     
+
+      <!-- Sub-Agents panel -->
+      <div class="slide-panel" id="panel-subagents">
+        <div class="panel-header">
+          <h3>Sub-Agents</h3>
+          <button onclick="closePanel('subagents')" class="panel-close-btn">✕</button>
+        </div>
+        <div class="panel-content" style="overflow-y:auto">
+          <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+            <button onclick="loadSubAgents()" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.6875rem;font-weight:600">↻ Refresh</button>
+            <span id="subagents-count" style="font-size:0.6875rem;color:var(--text2)"></span>
+          </div>
+          <div id="subagents-list"><div style="font-size:0.75rem;color:var(--text2)">No sub-agent sessions yet. Spawn sub-agents via the <code>agent</code> tool to see them here.</div></div>
+
+          <!-- Detail drawer -->
+          <div id="subagent-detail" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-weight:600;font-size:0.8125rem">Session Transcript</span>
+              <button onclick="hideSubAgentDetail()" style="border:none;background:none;color:var(--text2);cursor:pointer;font-size:0.8125rem">✕</button>
+            </div>
+            <div id="subagent-detail-meta" style="font-size:0.6875rem;color:var(--text2);margin-bottom:8px"></div>
+            <div id="subagent-owned-strip"></div>
+            <div id="subagent-detail-transcript" style="font-size:0.75rem"></div>
+            <div id="subagent-resume-controls" style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap">
+              <input id="subagent-resume-prompt" placeholder="续跑指令 / 接管后发消息（可选）" style="flex:1;min-width:160px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.6875rem" />
+              <button onclick="resumeSubAgentFromDetail()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.6875rem;font-weight:600">▶ Resume</button>
+              <button onclick="takeOverSubAgent()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:0.6875rem">✋ Take Over</button>
+              <button onclick="sendUserMessageFromDetail()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:0.6875rem;font-weight:600">✉ Send</button>
+            </div>
+            <div id="subagent-resume-hint" style="font-size:0.625rem;color:var(--text2);margin-top:4px"></div>
+          </div>
+        </div>
+      </div>
+
 
   <!-- Main -->
   <main id="main">
@@ -1658,6 +2178,70 @@ function handleMessage(msg) {
   else if (type === 'agents_md_reloaded') {
     showToast(`AGENTS.md reloaded`, 'success');
     document.getElementById('agents-md-status').textContent = msg.summary.exists ? `AGENTS.md loaded (${msg.summary.lines} lines)` : 'AGENTS.md not found';
+  }
+  else if (type === 'agent_template_applied') {
+    showToast(`Agent role applied: ${msg.applied?.display_name || msg.applied?.name || ''}`, 'success');
+  }
+
+  // ── Discussion (multi-agent) frames ─────────────
+  else if (type === 'discussion_start') {
+    showStatus(`💬 讨论开始：${msg.mode?.name || 'discussion'} · ${msg.roster?.length || 0} 位参与者 · ${msg.maxRounds} 轮`, 'thinking');
+    isThinking = true;
+    setSendEnabled(false);
+    document.getElementById('stop-btn').style.display = 'flex';
+    document.getElementById('send-btn').style.display = 'none';
+    window._discussion = { id: msg.discussionId, roster: msg.roster || [], mode: msg.mode || {}, topic: msg.topic, rounds: {} };
+    renderDiscussionCard(window._discussion);
+    appendLog('info', `💬 讨论开始: ${msg.topic}`);
+  }
+  else if (type === 'discussion_round_start') {
+    removeStatus();
+    showStatus(`🔄 第 ${msg.round}/${msg.totalRounds} 轮...`, 'thinking');
+    ensureDiscussionRound(msg.round);
+  }
+  else if (type === 'discussion_speaker_start') {
+    const sp = msg.speaker || {};
+    showStatus(`🗣️ ${sp.name || 'Speaker'} 发言中...`, 'thinking');
+    ensureDiscussionTurn(msg.round, msg.turnId, sp, !!msg.convergence);
+  }
+  else if (type === 'discussion_chunk') {
+    appendDiscussionChunk(msg.turnId, msg.content);
+  }
+  else if (type === 'discussion_speaker_end') {
+    finalizeDiscussionTurn(msg.turnId, msg.content);
+  }
+  else if (type === 'discussion_convergence_start') {
+    showStatus('🧭 主持人综合中...', 'thinking');
+  }
+  else if (type === 'discussion_stopped') {
+    removeStatus();
+    showToast('讨论已停止', 'info');
+    appendLog('warn', '讨论被用户停止');
+    finishDiscussionUI();
+  }
+  else if (type === 'discussion_done') {
+    removeStatus();
+    isThinking = false;
+    setSendEnabled(true);
+    document.getElementById('stop-btn').style.display = 'none';
+    document.getElementById('send-btn').style.display = 'flex';
+    if (msg.summary) renderDiscussionSummary(msg.summary);
+    showToast('讨论完成', 'success');
+    appendLog('info', '💬 讨论完成');
+    saveCurrentConversation();
+    loadRecentChats();
+  }
+
+  // ── Sub-Agent session updates (持久化 + 级联取消广播) ──
+  else if (type === 'subagent_session_updated') {
+    onSubAgentSessionUpdated(msg);
+  }
+  else if (['subagent_output', 'subagent_tool', 'subagent_tool_result', 'subagent_done', 'subagent_error'].includes(type) && msg.session_id) {
+    // 续跑（resume）实时进度：仅当详情抽屉正打开该会话时续显
+    onSubAgentLiveEvent(msg);
+  }
+  else if (type === 'subagents_cascaded_abort') {
+    showToast(`已级联停止 ${msg.ids?.length || 0} 个子 Agent`, 'info');
   }
 }
 
@@ -2494,7 +3078,6 @@ function saveFeishuConfig() {
   }).catch(err => {
     showToast('保存失败: ' + err.message, 'error');
   });
-}
 }
 
 function testFeishuConnection() {
@@ -3360,6 +3943,934 @@ function toggleToolOutput(id) {
     icon.textContent = '▶';
   }
 }
+
+// ── Agent Templates (移植自 qaimodelbuilder) ─────────────────
+let agentTemplatesCache = [];
+
+async function loadAgentTemplates() {
+  try {
+    const res = await fetch('/api/chat/agent-templates');
+    const data = await res.json();
+    agentTemplatesCache = Array.isArray(data.items) ? data.items : [];
+    renderAgentTemplatesList(agentTemplatesCache);
+  } catch (err) {
+    console.error('[AgentTemplates] load failed:', err);
+    document.getElementById('agent-templates-list').innerHTML =
+      `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">加载失败</div>`;
+  }
+}
+
+function renderAgentTemplatesList(items) {
+  const container = document.getElementById('agent-templates-list');
+  if (!container) return;
+  if (items.length === 0) {
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">No agent templates yet.</div>`;
+    return;
+  }
+  container.innerHTML = items.map((t) => {
+    const builtinClass = t.is_builtin ? 'builtin' : '';
+    const actions = t.is_builtin
+      ? `<button onclick="cloneAgentTemplate('${t.id}')">Clone</button><button onclick="applyAgentTemplate('${t.id}')" class="apply">Apply</button>`
+      : `<button onclick="applyAgentTemplate('${t.id}')" class="apply">Apply</button>` +
+        `<button onclick="editAgentTemplate('${t.id}')">Edit</button>` +
+        (t.cloned_from_id ? `<button onclick="resetAgentTemplate('${t.id}')">Reset</button>` : '') +
+        `<button onclick="cloneAgentTemplate('${t.id}')">Clone</button>` +
+        `<button onclick="deleteAgentTemplate('${t.id}')" class="danger">Del</button>`;
+    const configMeta = [];
+    if (t.model_id) configMeta.push(`model: ${t.model_id}`);
+    if (Array.isArray(t.config?.allowed_tools)) configMeta.push(`${t.config.allowed_tools.length} tools`);
+    if (Array.isArray(t.config?.enabled_skills)) configMeta.push(`${t.config.enabled_skills.length} skills`);
+    const meta = configMeta.length ? `<div class="agent-template-meta">${configMeta.join(' · ')}</div>` : '';
+    return `
+      <div class="agent-template-item ${builtinClass}">
+        <h4>
+          ${escapeHtml(t.display_name || t.name || t.id)}
+          ${t.is_builtin ? '<span class="agent-template-badge">built-in</span>' : ''}
+        </h4>
+        <p>${escapeHtml(t.description || '')}</p>
+        ${meta}
+        <div class="agent-template-actions">${actions}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function showAgentTemplateForm(id) {
+  const listView = document.getElementById('agents-list-view');
+  const form = document.getElementById('agent-template-form');
+  const title = document.getElementById('agent-template-form-title');
+  const idField = document.getElementById('agent-template-form-id');
+  listView.style.display = 'none';
+  form.style.display = 'block';
+
+  if (id) {
+    const t = agentTemplatesCache.find((x) => x.id === id);
+    if (!t) return;
+    title.textContent = 'Edit Agent Template';
+    idField.value = t.id;
+    document.getElementById('agent-template-name').value = t.name || '';
+    document.getElementById('agent-template-display-name').value = t.display_name || '';
+    document.getElementById('agent-template-description').value = t.description || '';
+    document.getElementById('agent-template-model-id').value = t.model_id || '';
+    document.getElementById('agent-template-persona').value = t.persona || '';
+    document.getElementById('agent-template-allowed-tools').value = (t.config?.allowed_tools || []).join(', ');
+    document.getElementById('agent-template-enabled-skills').value = (t.config?.enabled_skills || []).join(', ');
+    document.getElementById('agent-template-color').value = t.config?.color != null ? t.config.color : '';
+  } else {
+    title.textContent = 'Create Agent Template';
+    idField.value = '';
+    document.getElementById('agent-template-name').value = '';
+    document.getElementById('agent-template-display-name').value = '';
+    document.getElementById('agent-template-description').value = '';
+    document.getElementById('agent-template-model-id').value = '';
+    document.getElementById('agent-template-persona').value = '';
+    document.getElementById('agent-template-allowed-tools').value = '';
+    document.getElementById('agent-template-enabled-skills').value = '';
+    document.getElementById('agent-template-color').value = '';
+  }
+}
+
+function backToAgentTemplatesList() {
+  document.getElementById('agents-list-view').style.display = 'block';
+  document.getElementById('agent-template-form').style.display = 'none';
+  renderAgentTemplatesList(agentTemplatesCache);
+}
+
+function splitCommaList(value) {
+  return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+async function saveAgentTemplate() {
+  const id = document.getElementById('agent-template-form-id').value;
+  const payload = {
+    name: document.getElementById('agent-template-name').value.trim(),
+    display_name: document.getElementById('agent-template-display-name').value.trim(),
+    description: document.getElementById('agent-template-description').value.trim(),
+    model_id: document.getElementById('agent-template-model-id').value.trim() || null,
+    persona: document.getElementById('agent-template-persona').value.trim() || null,
+    config: {
+      allowed_tools: splitCommaList(document.getElementById('agent-template-allowed-tools').value),
+      enabled_skills: splitCommaList(document.getElementById('agent-template-enabled-skills').value),
+    },
+  };
+  const colorVal = document.getElementById('agent-template-color').value.trim();
+  if (colorVal !== '') {
+    const n = parseInt(colorVal, 10);
+    if (!isNaN(n)) payload.config.color = n;
+  }
+
+  try {
+    const method = id ? 'PATCH' : 'POST';
+    const url = id ? `/api/chat/agent-templates/${encodeURIComponent(id)}` : '/api/chat/agent-templates';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    showToast(id ? 'Template updated' : 'Template created');
+    backToAgentTemplatesList();
+    await loadAgentTemplates();
+  } catch (err) {
+    showToast(`Save failed: ${err.message}`);
+  }
+}
+
+function editAgentTemplate(id) {
+  showAgentTemplateForm(id);
+}
+
+async function deleteAgentTemplate(id) {
+  const t = agentTemplatesCache.find((x) => x.id === id);
+  if (!t) return;
+  if (!confirm(`Delete agent template "${t.display_name || t.name}"?`)) return;
+  try {
+    const res = await fetch(`/api/chat/agent-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    showToast('Template deleted');
+    await loadAgentTemplates();
+  } catch (err) {
+    showToast(`Delete failed: ${err.message}`);
+  }
+}
+
+async function cloneAgentTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/agent-templates/${encodeURIComponent(id)}/clone`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    showToast('Template cloned');
+    await loadAgentTemplates();
+  } catch (err) {
+    showToast(`Clone failed: ${err.message}`);
+  }
+}
+
+async function resetAgentTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/agent-templates/${encodeURIComponent(id)}/reset`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    showToast('Template reset');
+    await loadAgentTemplates();
+  } catch (err) {
+    showToast(`Reset failed: ${err.message}`);
+  }
+}
+
+async function applyAgentTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/agent-templates/${encodeURIComponent(id)}/apply`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText);
+    }
+    const { applied } = await res.json();
+    if (ws && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'apply_agent_template', template_id: id }));
+    }
+    showToast(`Applied role: ${applied.display_name || applied.name}`);
+  } catch (err) {
+    showToast(`Apply failed: ${err.message}`);
+  }
+}
+
+// ============================================================
+// Discussion / Multi-Agent 编排（前端）
+// ============================================================
+let rosterTemplatesCache = [];
+let modeTemplatesCache = [];
+
+// ── Launcher ──
+async function startDiscussion() {
+  const rosterId = document.getElementById('discussion-roster').value;
+  const modeId = document.getElementById('discussion-mode').value;
+  const topic = document.getElementById('discussion-topic').value.trim();
+  const maxRounds = parseInt(document.getElementById('discussion-max-rounds').value, 10) || 3;
+  if (!rosterId || !modeId) { showToast('Please select a roster and a mode', 'error'); return; }
+  if (!topic) { showToast('Please enter a topic', 'error'); return; }
+  if (ws && ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'start_discussion',
+      roster_template_id: rosterId,
+      mode_template_id: modeId,
+      topic,
+      max_rounds: maxRounds,
+    }));
+    closeAllPanels();
+  } else {
+    showToast('Not connected', 'error');
+  }
+}
+
+function showDiscussionTab(tab) {
+  const rosterTab = document.getElementById('discussion-tab-roster');
+  const modeTab = document.getElementById('discussion-tab-mode');
+  const rBtn = document.getElementById('discussion-tab-roster-btn');
+  const mBtn = document.getElementById('discussion-tab-mode-btn');
+  if (tab === 'roster') {
+    rosterTab.style.display = 'block'; modeTab.style.display = 'none';
+    rBtn.style.background = 'var(--accent)'; rBtn.style.color = '#fff'; rBtn.style.borderColor = 'var(--accent)';
+    mBtn.style.background = 'var(--bg3)'; mBtn.style.color = 'var(--text2)'; mBtn.style.borderColor = 'var(--border)';
+  } else {
+    rosterTab.style.display = 'none'; modeTab.style.display = 'block';
+    mBtn.style.background = 'var(--accent)'; mBtn.style.color = '#fff'; mBtn.style.borderColor = 'var(--accent)';
+    rBtn.style.background = 'var(--bg3)'; rBtn.style.color = 'var(--text2)'; rBtn.style.borderColor = 'var(--border)';
+  }
+}
+
+// ── Roster templates ──
+async function loadRosterTemplates() {
+  try {
+    const res = await fetch('/api/chat/roster-templates');
+    const data = await res.json();
+    rosterTemplatesCache = Array.isArray(data.items) ? data.items : [];
+    renderRosterTemplatesList(rosterTemplatesCache);
+    populateDiscussionSelect('discussion-roster', rosterTemplatesCache, 'roster');
+  } catch (err) {
+    console.error('[RosterTemplates] load failed:', err);
+    document.getElementById('roster-templates-list').innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">加载失败</div>`;
+  }
+}
+
+function renderRosterTemplatesList(items) {
+  const container = document.getElementById('roster-templates-list');
+  if (!container) return;
+  if (items.length === 0) {
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">No roster templates yet.</div>`;
+    return;
+  }
+  container.innerHTML = items.map((t) => {
+    const builtinClass = t.is_builtin ? 'builtin' : '';
+    const actions = t.is_builtin
+      ? `<button onclick="cloneRosterTemplate('${t.id}')">Clone</button>`
+      : `<button onclick="editRosterTemplate('${t.id}')">Edit</button>` +
+        (t.cloned_from_id ? `<button onclick="resetRosterTemplate('${t.id}')">Reset</button>` : '') +
+        `<button onclick="cloneRosterTemplate('${t.id}')">Clone</button>` +
+        `<button onclick="deleteRosterTemplate('${t.id}')" class="danger">Del</button>`;
+    const memberMeta = Array.isArray(t.members) ? `${t.members.length} members` : '';
+    const meta = memberMeta ? `<div class="agent-template-meta">${memberMeta}</div>` : '';
+    return `
+      <div class="roster-template-item ${builtinClass}">
+        <h4>${escapeHtml(t.name || t.id)}${t.is_builtin ? '<span class="agent-template-badge">built-in</span>' : ''}</h4>
+        <p>${escapeHtml(t.description || '')}</p>
+        ${meta}
+        <div class="roster-template-actions">${actions}</div>
+      </div>`;
+  }).join('');
+}
+
+function showRosterTemplateForm(id) {
+  document.getElementById('discussion-tab-roster').style.display = 'none';
+  document.getElementById('roster-template-form').style.display = 'block';
+  if (id) {
+    const t = rosterTemplatesCache.find((x) => x.id === id);
+    if (!t) return;
+    document.getElementById('roster-template-form-title').textContent = 'Edit Roster Template';
+    document.getElementById('roster-template-form-id').value = t.id;
+    document.getElementById('roster-template-name').value = t.name || '';
+    document.getElementById('roster-template-description').value = t.description || '';
+    document.getElementById('roster-template-default-mode').value = t.default_mode_id || '';
+    renderRosterMemberRows(t.members || []);
+  } else {
+    document.getElementById('roster-template-form-title').textContent = 'Create Roster Template';
+    document.getElementById('roster-template-form-id').value = '';
+    document.getElementById('roster-template-name').value = '';
+    document.getElementById('roster-template-description').value = '';
+    document.getElementById('roster-template-default-mode').value = '';
+    renderRosterMemberRows([{ display_name: '', model_id: '', persona: '', config: { color: 0 } }]);
+  }
+}
+
+function renderRosterMemberRows(members) {
+  const editor = document.getElementById('roster-members-editor');
+  editor.innerHTML = members.map((m, i) => `
+    <div class="roster-member-row" data-idx="${i}">
+      <input type="text" placeholder="Display name" value="${escapeHtml(m.display_name || '')}" data-field="display_name" />
+      <input type="text" placeholder="Model ID (optional)" value="${escapeHtml(m.model_id || '')}" data-field="model_id" />
+      <textarea placeholder="Persona / system prompt" data-field="persona" rows="2">${escapeHtml(m.persona || '')}</textarea>
+      <input type="number" placeholder="Color index" value="${m.config && m.config.color != null ? m.config.color : 0}" data-field="color" />
+      <button onclick="removeRosterMemberRow(this)" style="margin-top:4px;padding:2px 6px;border-radius:5px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size:0.6875rem">Remove</button>
+    </div>
+  `).join('');
+}
+
+function addRosterMemberRow() {
+  const editor = document.getElementById('roster-members-editor');
+  const div = document.createElement('div');
+  div.className = 'roster-member-row';
+  div.innerHTML = `
+    <input type="text" placeholder="Display name" data-field="display_name" />
+    <input type="text" placeholder="Model ID (optional)" data-field="model_id" />
+    <textarea placeholder="Persona / system prompt" data-field="persona" rows="2"></textarea>
+    <input type="number" placeholder="Color index" value="0" data-field="color" />
+    <button onclick="removeRosterMemberRow(this)" style="margin-top:4px;padding:2px 6px;border-radius:5px;border:1px solid var(--red);background:none;color:var(--red);cursor:pointer;font-size:0.6875rem">Remove</button>`;
+  editor.appendChild(div);
+}
+
+function removeRosterMemberRow(btn) {
+  btn.closest('.roster-member-row').remove();
+}
+
+function collectRosterMembers() {
+  const rows = document.querySelectorAll('#roster-members-editor .roster-member-row');
+  const members = [];
+  rows.forEach((row) => {
+    const get = (f) => row.querySelector(`[data-field="${f}"]`);
+    const colorVal = get('color').value.trim();
+    members.push({
+      display_name: get('display_name').value.trim(),
+      model_id: get('model_id').value.trim() || null,
+      persona: get('persona').value.trim() || null,
+      config: { color: colorVal !== '' ? parseInt(colorVal, 10) || 0 : 0 },
+    });
+  });
+  return members.filter((m) => m.display_name);
+}
+
+function backToRosterTemplatesList() {
+  document.getElementById('discussion-tab-roster').style.display = 'block';
+  document.getElementById('roster-template-form').style.display = 'none';
+  renderRosterTemplatesList(rosterTemplatesCache);
+}
+
+async function saveRosterTemplate() {
+  const id = document.getElementById('roster-template-form-id').value;
+  const payload = {
+    name: document.getElementById('roster-template-name').value.trim(),
+    description: document.getElementById('roster-template-description').value.trim(),
+    default_mode_id: document.getElementById('roster-template-default-mode').value.trim() || null,
+    members: collectRosterMembers(),
+  };
+  if (!payload.name) { showToast('Name required', 'error'); return; }
+  if (payload.members.length === 0) { showToast('Add at least one member', 'error'); return; }
+  try {
+    const method = id ? 'PATCH' : 'POST';
+    const url = id ? `/api/chat/roster-templates/${encodeURIComponent(id)}` : '/api/chat/roster-templates';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast(id ? 'Roster updated' : 'Roster created');
+    backToRosterTemplatesList();
+    await loadRosterTemplates();
+  } catch (err) { showToast(`Save failed: ${err.message}`); }
+}
+
+function editRosterTemplate(id) { showRosterTemplateForm(id); }
+
+async function deleteRosterTemplate(id) {
+  const t = rosterTemplatesCache.find((x) => x.id === id);
+  if (!t) return;
+  if (!confirm(`Delete roster template "${t.name}"?`)) return;
+  try {
+    const res = await fetch(`/api/chat/roster-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast('Roster deleted');
+    await loadRosterTemplates();
+  } catch (err) { showToast(`Delete failed: ${err.message}`); }
+}
+
+async function cloneRosterTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/roster-templates/${encodeURIComponent(id)}/clone`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast('Roster cloned');
+    await loadRosterTemplates();
+  } catch (err) { showToast(`Clone failed: ${err.message}`); }
+}
+
+async function resetRosterTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/roster-templates/${encodeURIComponent(id)}/reset`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast('Roster reset');
+    await loadRosterTemplates();
+  } catch (err) { showToast(`Reset failed: ${err.message}`); }
+}
+
+// ── Mode templates ──
+async function loadModeTemplates() {
+  try {
+    const res = await fetch('/api/chat/mode-templates');
+    const data = await res.json();
+    modeTemplatesCache = Array.isArray(data.items) ? data.items : [];
+    renderModeTemplatesList(modeTemplatesCache);
+    populateDiscussionSelect('discussion-mode', modeTemplatesCache, 'mode');
+  } catch (err) {
+    console.error('[ModeTemplates] load failed:', err);
+    document.getElementById('mode-templates-list').innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">加载失败</div>`;
+  }
+}
+
+function renderModeTemplatesList(items) {
+  const container = document.getElementById('mode-templates-list');
+  if (!container) return;
+  if (items.length === 0) {
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:0.75rem">No mode templates yet.</div>`;
+    return;
+  }
+  container.innerHTML = items.map((t) => {
+    const builtinClass = t.is_builtin ? 'builtin' : '';
+    const actions = t.is_builtin
+      ? `<button onclick="cloneModeTemplate('${t.id}')">Clone</button>`
+      : `<button onclick="editModeTemplate('${t.id}')">Edit</button>` +
+        (t.cloned_from_id ? `<button onclick="resetModeTemplate('${t.id}')">Reset</button>` : '') +
+        `<button onclick="cloneModeTemplate('${t.id}')">Clone</button>` +
+        `<button onclick="deleteModeTemplate('${t.id}')" class="danger">Del</button>`;
+    const flow = t.flow_policy || {};
+    const meta = `<div class="agent-template-meta">${flow.speaker_strategy || 'round_robin'} · ${flow.max_rounds ?? 8} rounds · judge:${flow.judge_enabled !== false}</div>`;
+    return `
+      <div class="mode-template-item ${builtinClass}">
+        <h4>${escapeHtml(t.name || t.id)}${t.is_builtin ? '<span class="agent-template-badge">built-in</span>' : ''}</h4>
+        <p>${escapeHtml(t.description || '')}</p>
+        ${meta}
+        <div class="mode-template-actions">${actions}</div>
+      </div>`;
+  }).join('');
+}
+
+function showModeTemplateForm(id) {
+  document.getElementById('discussion-tab-mode').style.display = 'none';
+  document.getElementById('mode-template-form').style.display = 'block';
+  if (id) {
+    const t = modeTemplatesCache.find((x) => x.id === id);
+    if (!t) return;
+    const flow = t.flow_policy || {};
+    document.getElementById('mode-template-form-title').textContent = 'Edit Mode Template';
+    document.getElementById('mode-template-form-id').value = t.id;
+    document.getElementById('mode-template-name').value = t.name || '';
+    document.getElementById('mode-template-description').value = t.description || '';
+    document.getElementById('mode-template-framing').value = t.framing || '';
+    document.getElementById('mode-template-speaker-strategy').value = flow.speaker_strategy || 'round_robin';
+    document.getElementById('mode-template-max-rounds').value = flow.max_rounds ?? 8;
+    document.getElementById('mode-template-judge').value = flow.judge_enabled !== false ? 'true' : 'false';
+  } else {
+    document.getElementById('mode-template-form-title').textContent = 'Create Mode Template';
+    document.getElementById('mode-template-form-id').value = '';
+    document.getElementById('mode-template-name').value = '';
+    document.getElementById('mode-template-description').value = '';
+    document.getElementById('mode-template-framing').value = '';
+    document.getElementById('mode-template-speaker-strategy').value = 'round_robin';
+    document.getElementById('mode-template-max-rounds').value = 8;
+    document.getElementById('mode-template-judge').value = 'true';
+  }
+}
+
+function backToModeTemplatesList() {
+  document.getElementById('discussion-tab-mode').style.display = 'block';
+  document.getElementById('mode-template-form').style.display = 'none';
+  renderModeTemplatesList(modeTemplatesCache);
+}
+
+async function saveModeTemplate() {
+  const id = document.getElementById('mode-template-form-id').value;
+  const judge = document.getElementById('mode-template-judge').value === 'true';
+  const payload = {
+    name: document.getElementById('mode-template-name').value.trim(),
+    description: document.getElementById('mode-template-description').value.trim(),
+    framing: document.getElementById('mode-template-framing').value.trim(),
+    flow_policy: {
+      speaker_strategy: document.getElementById('mode-template-speaker-strategy').value,
+      max_rounds: parseInt(document.getElementById('mode-template-max-rounds').value, 10) || 8,
+      judge_enabled: judge,
+    },
+  };
+  if (!payload.name) { showToast('Name required', 'error'); return; }
+  try {
+    const method = id ? 'PATCH' : 'POST';
+    const url = id ? `/api/chat/mode-templates/${encodeURIComponent(id)}` : '/api/chat/mode-templates';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast(id ? 'Mode updated' : 'Mode created');
+    backToModeTemplatesList();
+    await loadModeTemplates();
+  } catch (err) { showToast(`Save failed: ${err.message}`); }
+}
+
+function editModeTemplate(id) { showModeTemplateForm(id); }
+
+async function deleteModeTemplate(id) {
+  const t = modeTemplatesCache.find((x) => x.id === id);
+  if (!t) return;
+  if (!confirm(`Delete mode template "${t.name}"?`)) return;
+  try {
+    const res = await fetch(`/api/chat/mode-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast('Mode deleted');
+    await loadModeTemplates();
+  } catch (err) { showToast(`Delete failed: ${err.message}`); }
+}
+
+async function cloneModeTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/mode-templates/${encodeURIComponent(id)}/clone`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast('Mode cloned');
+    await loadModeTemplates();
+  } catch (err) { showToast(`Clone failed: ${err.message}`); }
+}
+
+async function resetModeTemplate(id) {
+  try {
+    const res = await fetch(`/api/chat/mode-templates/${encodeURIComponent(id)}/reset`, { method: 'POST' });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+    showToast('Mode reset');
+    await loadModeTemplates();
+  } catch (err) { showToast(`Reset failed: ${err.message}`); }
+}
+
+function populateDiscussionSelect(elId, items, kind) {
+  const sel = document.getElementById(elId);
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = items.map((t) => `<option value="${t.id}">${escapeHtml(t.name || t.id)}${t.is_builtin ? ' (built-in)' : ''}</option>`).join('');
+  // 优先选中带默认绑定的项
+  if (kind === 'mode' && window._lastRosterDefaultMode) {
+    if (items.some((t) => t.id === window._lastRosterDefaultMode)) sel.value = window._lastRosterDefaultMode;
+  }
+  if (prev && items.some((t) => t.id === prev)) sel.value = prev;
+}
+
+// ── Discussion transcript rendering ──
+const DISCUSSION_PALETTE = ['#5b8def', '#e0734f', '#3fae7a', '#b166d6', '#d6a23f', '#46b3c9', '#d65f8a', '#7a8a99'];
+function discussionColor(idx) {
+  if (idx == null || idx < 0) return '#9b8cff';
+  return DISCUSSION_PALETTE[idx % DISCUSSION_PALETTE.length];
+}
+
+function renderDiscussionCard(disc) {
+  hideWelcome();
+  const container = document.getElementById('messages');
+  const card = document.createElement('div');
+  card.className = 'discussion-card';
+  card.id = `discussion-${disc.id}`;
+  card.innerHTML = `
+    <div class="discussion-round-header">💬 讨论：${escapeHtml(disc.topic || '')} <span style="font-weight:400;color:var(--text3)">· ${disc.mode?.name || ''} · ${disc.roster?.length || 0} 位参与者</span></div>
+    <div id="discussion-rounds-${disc.id}"></div>`;
+  container.appendChild(card);
+  scrollToBottom();
+}
+
+function ensureDiscussionRound(round) {
+  const disc = window._discussion;
+  if (!disc) return;
+  const host = document.getElementById(`discussion-rounds-${disc.id}`);
+  if (!host) return;
+  if (document.getElementById(`discussion-round-${disc.id}-${round}`)) return;
+  const div = document.createElement('div');
+  div.id = `discussion-round-${disc.id}-${round}`;
+  div.innerHTML = `<div class="discussion-round-header" style="background:var(--bg2)">第 ${round} 轮</div>`;
+  host.appendChild(div);
+  scrollToBottom();
+}
+
+function ensureDiscussionTurn(round, turnId, sp, convergence) {
+  const disc = window._discussion;
+  if (!disc) return;
+  ensureDiscussionRound(round);
+  const roundEl = document.getElementById(`discussion-round-${disc.id}-${round}`);
+  if (!roundEl) return;
+  if (document.getElementById(`turn-${turnId}`)) return;
+  const color = sp.color != null && sp.color >= 0 ? discussionColor(sp.color) : discussionColor(sp.index);
+  const div = document.createElement('div');
+  div.className = 'discussion-speaker' + (convergence ? ' convergence' : '');
+  div.id = `turn-${turnId}`;
+  div.innerHTML = `
+    <div class="discussion-speaker-header">
+      <span class="discussion-speaker-dot" style="background:${color}"></span>
+      <span>${escapeHtml(sp.name || 'Speaker')}</span>
+    </div>
+    <div class="discussion-speaker-body"></div>`;
+  roundEl.appendChild(div);
+  scrollToBottom();
+}
+
+function appendDiscussionChunk(turnId, content) {
+  const turn = document.getElementById(`turn-${turnId}`);
+  if (!turn) return;
+  const body = turn.querySelector('.discussion-speaker-body');
+  body.textContent += content;
+  scrollToBottom();
+}
+
+function finalizeDiscussionTurn(turnId, content) {
+  const turn = document.getElementById(`turn-${turnId}`);
+  if (!turn) return;
+  const body = turn.querySelector('.discussion-speaker-body');
+  if (content != null) body.textContent = content;
+  scrollToBottom();
+}
+
+function renderDiscussionSummary(summary) {
+  const disc = window._discussion;
+  if (!disc) return;
+  const host = document.getElementById(`discussion-rounds-${disc.id}`) || document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'discussion-summary';
+  div.innerHTML = `<h4>🧭 综合结论</h4><div style="white-space:pre-wrap;font-size:0.875rem;line-height:1.5">${escapeHtml(summary)}</div>`;
+  host.appendChild(div);
+  scrollToBottom();
+}
+
+function finishDiscussionUI() {
+  isThinking = false;
+  setSendEnabled(true);
+  document.getElementById('stop-btn').style.display = 'none';
+  document.getElementById('send-btn').style.display = 'flex';
+}
+
+// ── Sub-Agents (会话持久化 + 独立中断) ──
+// 当前打开的详情抽屉 session id + 续跑流式输出累积节点
+let _openDetailId = null;
+let _liveAssistantDiv = null;
+
+async function loadSubAgents() {
+  try {
+    const res = await fetch('/api/chat/subagents');
+    if (!res.ok) return;
+    const { items } = await res.json();
+    renderSubAgentsList(items || []);
+  } catch (e) {
+    console.error('loadSubAgents failed', e);
+  }
+}
+
+function statusBadge(status) {
+  const cls = (status || '').replace(/\s/g, '');
+  // 中文标签：USER_OWNED 显式标为"已接管"，与自动 resume 的 done 明显区分
+  const LABELS = {
+    user_owned: '已接管',
+    running: '运行中',
+    done: '已完成',
+    error: '出错',
+    interrupted: '已中断',
+  };
+  const label = LABELS[cls] || (status || 'unknown');
+  const badgeCls = cls === 'user_owned' ? 'badge-owned' : `badge-${cls}`;
+  return `<span class="badge ${badgeCls}">${escapeHtml(label)}</span>`;
+}
+
+function renderSubAgentsList(items) {
+  const listEl = document.getElementById('subagents-list');
+  const countEl = document.getElementById('subagents-count');
+  if (countEl) countEl.textContent = `${items.length} session(s)`;
+  if (!items.length) {
+    listEl.innerHTML = '<div style="font-size:0.75rem;color:var(--text2)">No sub-agent sessions yet. Spawn sub-agents via the <code>agent</code> tool to see them here.</div>';
+    return;
+  }
+  // 最新在前
+  const sorted = items.slice().sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+  listEl.innerHTML = sorted.map((s) => {
+    const depthTag = s.depth > 1 ? ` · depth ${s.depth}` : '';
+    const usage = s.usage && typeof s.usage === 'object'
+      ? ` · ${Number(s.usage.total_tokens || s.usage.prompt_tokens || 0)} tok`
+      : '';
+    const owned = s.status === 'user_owned';
+    const ownedTag = owned ? '<span class="owned-tag">👤 用户接管</span>' : '';
+    return `<div class="subagent-card ${owned ? 'owned' : ''}" data-id="${escapeHtml(s.id)}">
+      <div class="subagent-card-head">
+        <span class="subagent-type">${escapeHtml(s.subagent_type || 'agent')}</span>
+        ${statusBadge(s.status)}
+        ${ownedTag}
+        <span class="subagent-meta" style="margin:0">${s.rounds || 0} rounds</span>
+      </div>
+      <div class="subagent-preview">${escapeHtml(s.prompt_preview || '(no description)')}</div>
+      <div class="subagent-meta">${escapeHtml(s.id)}${depthTag}${usage}</div>
+      <div class="subagent-actions">
+        <button onclick="viewSubAgent('${escapeHtml(s.id)}')">View</button>
+        <button class="danger" onclick="interruptSubAgent('${escapeHtml(s.id)}')">Interrupt</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function interruptSubAgent(id) {
+  try {
+    const res = await fetch(`/api/chat/subagents/${encodeURIComponent(id)}/interrupt`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (data.aborted === false) {
+      showToast('Sub-agent already finished (nothing to interrupt)', 'info');
+    } else {
+      showToast('Sub-agent interrupted', 'success');
+    }
+    // 乐观刷新该卡片状态
+    const card = document.querySelector(`.subagent-card[data-id="${CSS.escape(id)}"]`);
+    if (card) card.querySelector('.subagent-card-head').insertAdjacentHTML('beforeend', statusBadge('interrupted'));
+  } catch (e) {
+    showToast('Interrupt failed: ' + e.message, 'error');
+  }
+}
+
+async function viewSubAgent(id) {
+  try {
+    const res = await fetch(`/api/chat/subagents/${encodeURIComponent(id)}`);
+    if (!res.ok) { showToast('Load failed', 'error'); return; }
+    const { session } = await res.json();
+    const detail = document.getElementById('subagent-detail');
+    const meta = document.getElementById('subagent-detail-meta');
+    const tx = document.getElementById('subagent-detail-transcript');
+    meta.innerHTML = `${statusBadge(session.status)} · type <b>${escapeHtml(session.subagent_type)}</b> · ${session.rounds} rounds · model ${escapeHtml(session.model_id || 'n/a')}`;
+    const msgs = Array.isArray(session.messages) ? session.messages : [];
+    if (!msgs.length) {
+      tx.innerHTML = '<div style="font-size:0.75rem;color:var(--text2)">No transcript recorded yet.</div>';
+    } else {
+      tx.innerHTML = msgs.map((m) => {
+        const text = escapeHtml(m.text || (m.tool_calls && m.tool_calls.length ? `[tool_call: ${m.tool_calls.map((c)=>c.name).join(', ')}]` : ''));
+        const role = escapeHtml(m.role || 'assistant');
+        return `<div class="subagent-msg ${role}"><div class="subagent-msg-role">${role}</div><div class="subagent-msg-text">${text}</div></div>`;
+      }).join('');
+    }
+    _openDetailId = id;
+    _liveAssistantDiv = null; // 重新渲染后旧的流式节点已失效
+    // ── 接管态标识条：区分"用户接管"与"自动 resume 完成" ──
+    const strip = document.getElementById('subagent-owned-strip');
+    if (strip) {
+      strip.className = '';
+      if (session.status === 'user_owned') {
+        strip.classList.add('owned');
+        strip.style.display = 'flex';
+        strip.innerHTML = '👤 <b>此会话已由你接管</b> — 直接在上方输入框发消息（✉ Send），子 Agent 会持续在该会话内回复，状态保持「已接管」。';
+      } else if (session.status === 'done' && session.owner === 'main_agent') {
+        strip.classList.add('resumed');
+        strip.style.display = 'flex';
+        strip.innerHTML = '🤖 自动续跑已完成 — 该会话由系统自动恢复并已结束（非用户接管）。';
+      } else {
+        strip.style.display = 'none';
+      }
+    }
+    const hint = document.getElementById('subagent-resume-hint');
+    if (hint) {
+      let hintText;
+      if (session.status === 'user_owned') {
+        hintText = '✉ 你已接管此会话，直接在上方输入框发消息即可；也可 ▶ Resume 用默认指令自动续跑。';
+      } else if (['interrupted', 'error', 'user_owned'].includes(session.status)) {
+        hintText = '可续跑：点 ▶ Resume，或 ✋ Take Over 后进入接管态用 ✉ Send 直接发消息。';
+      } else {
+        hintText = session.status === 'running' ? '正在运行中…' : '该会话已结束。';
+      }
+      hint.textContent = hintText;
+    }
+    detail.style.display = 'block';
+  } catch (e) {
+    showToast('Load failed: ' + e.message, 'error');
+  }
+}
+
+function hideSubAgentDetail() {
+  document.getElementById('subagent-detail').style.display = 'none';
+  _openDetailId = null;
+  _liveAssistantDiv = null;
+}
+
+// WS 推送：子会话状态变化 → 若面板开着则就地刷新列表
+function onSubAgentSessionUpdated(summary) {
+  const listEl = document.getElementById('subagents-list');
+  if (!listEl) return;
+  const existing = listEl.querySelector(`.subagent-card[data-id="${CSS.escape(summary.id)}"]`);
+  if (existing) {
+    // 更新状态徽章与轮次
+    const head = existing.querySelector('.subagent-card-head');
+    const badge = head.querySelector('.badge');
+    if (badge) badge.outerHTML = statusBadge(summary.status);
+    const meta = existing.querySelector('.subagent-meta');
+    if (meta) meta.textContent = `${summary.rounds || 0} rounds`;
+    // 接管态高亮与标签同步
+    const isOwned = summary.status === 'user_owned';
+    existing.classList.toggle('owned', isOwned);
+    const existingTag = head.querySelector('.owned-tag');
+    if (isOwned && !existingTag) {
+      const tag = document.createElement('span');
+      tag.className = 'owned-tag';
+      tag.textContent = '👤 用户接管';
+      if (meta) head.insertBefore(tag, meta); else head.appendChild(tag);
+    } else if (!isOwned && existingTag) {
+      existingTag.remove();
+    }
+  }
+  // 若详情正打开的是同一条，刷新其 meta
+  const detail = document.getElementById('subagent-detail');
+  if (detail && detail.style.display !== 'none') {
+    // 简单处理：重新拉详情
+    viewSubAgent(summary.id);
+  }
+}
+
+// ── Resume / Wake（断点续跑） ──
+function resumeSubAgentFromDetail() {
+  const id = _openDetailId;
+  if (!id) { showToast('没有打开的会话', 'error'); return; }
+  const input = document.getElementById('subagent-resume-prompt');
+  const prompt = input ? input.value : '';
+  resumeSubAgent(id, prompt);
+}
+
+function resumeSubAgent(id, prompt) {
+  if (!ws || ws.readyState !== 1) { showToast('WebSocket 未连接', 'error'); return; }
+  _liveAssistantDiv = null;
+  ws.send(JSON.stringify({ type: 'resume_subagent', session_id: id, prompt: prompt || '' }));
+  showToast('正在续跑子 Agent…', 'info');
+  const hint = document.getElementById('subagent-resume-hint');
+  if (hint) hint.textContent = '续跑中…';
+}
+
+// ── 用户接管（user take-over） ──
+function takeOverSubAgent() {
+  const id = _openDetailId;
+  if (!id) { showToast('没有打开的会话', 'error'); return; }
+  if (!ws || ws.readyState !== 1) { showToast('WebSocket 未连接', 'error'); return; }
+  ws.send(JSON.stringify({ type: 'take_over_subagent', session_id: id }));
+  showToast('已接管该子 Agent（USER_OWNED）', 'info');
+}
+
+function sendUserMessageFromDetail() {
+  const id = _openDetailId;
+  if (!id) { showToast('没有打开的会话', 'error'); return; }
+  const input = document.getElementById('subagent-resume-prompt');
+  const text = input ? input.value.trim() : '';
+  if (!text) { showToast('请输入要发送的消息', 'error'); return; }
+  sendUserMessage(id, text);
+}
+
+// user_message 模式：用户在面板里直接给子 Agent 发消息并实时看到回复
+function sendUserMessage(id, text) {
+  if (!ws || ws.readyState !== 1) { showToast('WebSocket 未连接', 'error'); return; }
+  _liveAssistantDiv = null;
+  // 本地立即显示用户消息（后台会持久化并回传，done 时整条刷新覆盖，避免重复）
+  appendSubAgentLiveMsg('user', text);
+  const input = document.getElementById('subagent-resume-prompt');
+  if (input) input.value = '';
+  ws.send(JSON.stringify({ type: 'user_message_subagent', session_id: id, prompt: text }));
+  showToast('已发送，等待子 Agent 回复…', 'info');
+  const hint = document.getElementById('subagent-resume-hint');
+  if (hint) hint.textContent = '回复中…';
+}
+
+function appendSubAgentLiveMsg(role, text) {
+  const tx = document.getElementById('subagent-detail-transcript');
+  if (!tx) return;
+  const div = document.createElement('div');
+  div.className = 'subagent-msg ' + role;
+  div.innerHTML = `<div class="subagent-msg-role">${escapeHtml(role)}</div><div class="subagent-msg-text">${escapeHtml(text)}</div>`;
+  tx.appendChild(div);
+  tx.scrollTop = tx.scrollHeight;
+}
+
+// 续跑实时事件：仅当详情抽屉正打开该 session_id 时，追加到 transcript 实时续显
+function onSubAgentLiveEvent(msg) {
+  const sid = msg.session_id;
+  if (!sid || sid !== _openDetailId) return;
+  const tx = document.getElementById('subagent-detail-transcript');
+  if (!tx) return;
+  if (msg.type === 'subagent_output') {
+    // 累积流式 token 到同一个 assistant 块（避免每条 chunk 一个气泡）
+    if (!_liveAssistantDiv || _liveAssistantDiv.parentNode !== tx) {
+      _liveAssistantDiv = document.createElement('div');
+      _liveAssistantDiv.className = 'subagent-msg assistant';
+      _liveAssistantDiv.innerHTML = '<div class="subagent-msg-role">assistant</div><div class="subagent-msg-text"></div>';
+      tx.appendChild(_liveAssistantDiv);
+    }
+    const t = _liveAssistantDiv.querySelector('.subagent-msg-text');
+    if (t) t.textContent += (msg.content || '');
+    tx.scrollTop = tx.scrollHeight;
+  } else if (msg.type === 'subagent_tool') {
+    _liveAssistantDiv = null;
+    appendSubAgentLiveMsg('tool', `🔧 ${msg.tool_name || 'tool'}(${escapeHtml(JSON.stringify(msg.tool_args || {}))})`);
+  } else if (msg.type === 'subagent_tool_result') {
+    appendSubAgentLiveMsg('tool_result', `${escapeHtml(msg.tool_name || 'tool')}: ${(msg.result || '').slice(0, 400)}`);
+  } else if (msg.type === 'subagent_done') {
+    _liveAssistantDiv = null;
+    appendSubAgentLiveMsg('assistant', '✅ ' + (msg.result || '').slice(0, 600));
+    // 完成 → 重新拉取整条 transcript 刷新（含最终状态/轮次/完整消息）
+    setTimeout(() => { if (sid === _openDetailId) viewSubAgent(sid); }, 500);
+  } else if (msg.type === 'subagent_error') {
+    _liveAssistantDiv = null;
+    appendSubAgentLiveMsg('error', '❌ ' + (msg.message || ''));
+  }
+}
+
+// Load templates when DOM is ready and when the discussion panel is opened
+function onDiscussionPanelOpened() {
+  loadRosterTemplates();
+  loadModeTemplates();
+}
+
+// Patch togglePanel to auto-load discussion data when opening the panel
+// (the agents-panel patch already exists earlier; we wrap the already-wrapped fn)
+const _originalTogglePanelDisc = togglePanel;
+togglePanel = function(name) {
+  if (name === 'discussion') onDiscussionPanelOpened();
+  if (name === 'subagents') loadSubAgents();
+  return _originalTogglePanelDisc(name);
+};
 
 // ── Init ──────────────────────────────────────────────────────
 connect();

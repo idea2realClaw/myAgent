@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ac18a878-ac53-4dfe-a55b-cd13082b2062",
+    "name": "test_team (副本)",
+    "description": "updated",
+    "members": [
+      {
+        "display_name": "A",
+        "model_id": null,
+        "persona": "pA",
+        "config": {
+          "color": 1
+        }
+      },
+      {
+        "display_name": "B",
+        "model_id": null,
+        "persona": "pB",
+        "config": {
+          "color": 2
+        }
+      }
+    ],
+    "default_mode_id": null,
+    "is_builtin": false,
+    "cloned_from_id": "b161c193-7271-44a7-a9d7-ce9ae5a35e90",
+    "created_at": "2026-07-17T22:59:31.654Z",
+    "updated_at": "2026-07-17T22:59:31.654Z"
+  }
+]

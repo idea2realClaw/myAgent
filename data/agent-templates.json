@@ -1,0 +1,20 @@
+[
+  {
+    "id": "ed8537fa-3eed-4856-b530-4a815bc57505",
+    "name": "custom_dev",
+    "description": "custom",
+    "display_name": "Custom Dev",
+    "model_id": null,
+    "persona": "You are a custom dev.",
+    "config": {
+      "allowed_tools": [
+        "file_read"
+      ],
+      "enabled_skills": []
+    },
+    "is_builtin": false,
+    "cloned_from_id": null,
+    "created_at": "2026-07-17T22:45:46.203Z",
+    "updated_at": "2026-07-17T22:45:46.203Z"
+  }
+]

@@ -148,8 +148,9 @@ export class SingleAgentTurnKernel {
     onToolRoundComplete = null,
     forwardToolCallsInline = false,
     assistantTimestamp = null,
+    startRound = 1,
   }) {
-    for (let roundNo = 1; roundNo <= maxRounds; roundNo++) {
+    for (let roundNo = startRound; roundNo < startRound + maxRounds; roundNo++) {
       // ① abort 检查
       if (abortCheck && abortCheck()) {
         yield KernelAborted(roundNo);
