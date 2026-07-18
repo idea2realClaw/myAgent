@@ -1,0 +1,2 @@
+# OAuth2 客户端（用于 Outlook/Hotmail IMAP 登录）
+msal==1.28.0

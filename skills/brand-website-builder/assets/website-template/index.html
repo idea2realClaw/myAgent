@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="{{COMPANY_TAGLINE}}">
+  <title>{{COMPANY_NAME}}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="animations.css">
+</head>
+<body>
+
+  <!-- ========== NAVIGATION ========== -->
+  <nav class="navbar" id="navbar">
+    <div class="nav-container">
+      <div class="nav-logo">
+        <span class="logo-icon">{{LOGO_ICON}}</span>
+        <span class="logo-text">{{COMPANY_NAME}}</span>
+      </div>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="#home">{{NAV_HOME}}</a></li>
+        <li><a href="#about">{{NAV_ABOUT}}</a></li>
+        <li><a href="#services">{{NAV_SERVICES}}</a></li>
+        <li><a href="#cases">{{NAV_CASES}}</a></li>
+        <li><a href="#contact">{{NAV_CONTACT}}</a></li>
+      </ul>
+      <button class="nav-cta">{{CTA_PRIMARY}}</button>
+      <button class="hamburger" id="hamburger" aria-label="{{NAV_MENU}}">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ========== HERO ========== -->
+  <section class="hero" id="home">
+    <div class="hero-bg"></div>
+    <div class="hero-content">
+      <div class="hero-badge">{{HERO_BADGE}}</div>
+      <h1 class="hero-title">{{HERO_TITLE}}</h1>
+      <p class="hero-subtitle">{{HERO_SUBTITLE}}</p>
+      <div class="hero-actions">
+        <a href="#contact" class="btn btn-primary">{{CTA_PRIMARY}}</a>
+        <a href="#about" class="btn btn-outline">{{CTA_SECONDARY}}</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-num">{{STAT1_NUM}}</span>
+          <span class="stat-label">{{STAT1_LABEL}}</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-num">{{STAT2_NUM}}</span>
+          <span class="stat-label">{{STAT2_LABEL}}</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat">
+          <span class="stat-num">{{STAT3_NUM}}</span>
+          <span class="stat-label">{{STAT3_LABEL}}</span>
+        </div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="hero-card card-float">
+        <div class="card-icon">{{CARD1_ICON}}</div>
+        <div class="card-text">{{CARD1_TEXT}}</div>
+      </div>
+      <div class="hero-card card-float-delay">
+        <div class="card-icon">{{CARD2_ICON}}</div>
+        <div class="card-text">{{CARD2_TEXT}}</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ABOUT ========== -->
+  <section class="about" id="about">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">{{ABOUT_TAG}}</span>
+        <h2>{{ABOUT_TITLE}}</h2>
+        <p>{{ABOUT_DESC}}</p>
+      </div>
+      <div class="about-grid">
+        <div class="about-content">
+          <p>{{ABOUT_BODY}}</p>
+          <ul class="about-features">
+            <li><span class="check">✓</span> {{FEATURE1}}</li>
+            <li><span class="check">✓</span> {{FEATURE2}}</li>
+            <li><span class="check">✓</span> {{FEATURE3}}</li>
+            <li><span class="check">✓</span> {{FEATURE4}}</li>
+          </ul>
+        </div>
+        <div class="about-visual">
+          <div class="about-card">
+            <div class="about-icon">{{ABOUT_ICON}}</div>
+            <h3>{{ABOUT_CARD_TITLE}}</h3>
+            <p>{{ABOUT_CARD_DESC}}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== SERVICES ========== -->
+  <section class="services" id="services">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">{{SERVICES_TAG}}</span>
+        <h2>{{SERVICES_TITLE}}</h2>
+        <p>{{SERVICES_DESC}}</p>
+      </div>
+      <div class="services-grid">
+        <div class="service-card">
+          <div class="service-icon">{{SVC1_ICON}}</div>
+          <h3>{{SVC1_TITLE}}</h3>
+          <p>{{SVC1_DESC}}</p>
+        </div>
+        <div class="service-card featured">
+          <div class="service-badge">Core {{NAV_SERVICES}}</div>
+          <div class="service-icon">{{SVC2_ICON}}</div>
+          <h3>{{SVC2_TITLE}}</h3>
+          <p>{{SVC2_DESC}}</p>
+        </div>
+        <div class="service-card">
+          <div class="service-icon">{{SVC3_ICON}}</div>
+          <h3>{{SVC3_TITLE}}</h3>
+          <p>{{SVC3_DESC}}</p>
+        </div>
+        <div class="service-card">
+          <div class="service-icon">{{SVC4_ICON}}</div>
+          <h3>{{SVC4_TITLE}}</h3>
+          <p>{{SVC4_DESC}}</p>
+        </div>
+        <div class="service-card">
+          <div class="service-icon">{{SVC5_ICON}}</div>
+          <h3>{{SVC5_TITLE}}</h3>
+          <p>{{SVC5_DESC}}</p>
+        </div>
+        <div class="service-card">
+          <div class="service-icon">{{SVC6_ICON}}</div>
+          <h3>{{SVC6_TITLE}}</h3>
+          <p>{{SVC6_DESC}}</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== CASES ========== -->
+  <section class="cases" id="cases">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">{{CASES_TAG}}</span>
+        <h2>{{CASES_TITLE}}</h2>
+        <p>{{CASES_DESC}}</p>
+      </div>
+      <div class="cases-grid">
+        <div class="case-card">
+          <div class="case-num">01</div>
+          <h3>{{CASE1_TITLE}}</h3>
+          <p>{{CASE1_DESC}}</p>
+          <a href="#" class="case-link">{{CTA_SECONDARY}} →</a>
+        </div>
+        <div class="case-card">
+          <div class="case-num">02</div>
+          <h3>{{CASE2_TITLE}}</h3>
+          <p>{{CASE2_DESC}}</p>
+          <a href="#" class="case-link">{{CTA_SECONDARY}} →</a>
+        </div>
+        <div class="case-card">
+          <div class="case-num">03</div>
+          <h3>{{CASE3_TITLE}}</h3>
+          <p>{{CASE3_DESC}}</p>
+          <a href="#" class="case-link">{{CTA_SECONDARY}} →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== CONTACT ========== -->
+  <section class="contact" id="contact">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">{{CONTACT_TAG}}</span>
+        <h2>{{CONTACT_TITLE}}</h2>
+        <p>{{CONTACT_DESC}}</p>
+      </div>
+      <div class="contact-grid">
+        <div class="contact-info">
+          <div class="info-item">
+            <span class="info-icon">📍</span>
+            <div>
+              <strong>{{CONTACT_ADDRESS}}</strong>
+              <p>{{COMPANY_ADDRESS}}</p>
+            </div>
+          </div>
+          <div class="info-item">
+            <span class="info-icon">📞</span>
+            <div>
+              <strong>{{CONTACT_PHONE}}</strong>
+              <p>{{COMPANY_PHONE}}</p>
+            </div>
+          </div>
+          <div class="info-item">
+            <span class="info-icon">✉️</span>
+            <div>
+              <strong>{{CONTACT_EMAIL}}</strong>
+              <p>{{COMPANY_EMAIL}}</p>
+            </div>
+          </div>
+        </div>
+        <form class="contact-form" onsubmit="handleSubmit(event)">
+          <div class="form-row">
+            <input type="text" placeholder="{{FORM_NAME}}" required>
+            <input type="tel" placeholder="{{FORM_PHONE}}" required>
+          </div>
+          <input type="text" placeholder="{{FORM_COMPANY}}">
+          <textarea placeholder="{{FORM_MESSAGE}}..." rows="4" required></textarea>
+          <button type="submit" class="btn btn-primary btn-full">{{FORM_SUBMIT}}</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== FOOTER ========== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <div class="nav-logo">
+            <span class="logo-icon">{{LOGO_ICON}}</span>
+            <span class="logo-text">{{COMPANY_NAME}}</span>
+          </div>
+          <p>{{FOOTER_DESC}}</p>
+        </div>
+        <div class="footer-links">
+          <h4>{{FOOTER_QUICK}}</h4>
+          <ul>
+            <li><a href="#home">{{NAV_HOME}}</a></li>
+            <li><a href="#about">{{NAV_ABOUT}}</a></li>
+            <li><a href="#services">{{NAV_SERVICES}}</a></li>
+            <li><a href="#contact">{{NAV_CONTACT}}</a></li>
+          </ul>
+        </div>
+        <div class="footer-contact">
+          <h4>{{FOOTER_CONTACT}}</h4>
+          <p>{{COMPANY_PHONE}}</p>
+          <p>{{COMPANY_EMAIL}}</p>
+          <p>{{COMPANY_ADDRESS}}</p>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>© {{YEAR}} {{COMPANY_NAME}} {{FOOTER_COPYRIGHT}} | {{COMPANY_ICP}}</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
