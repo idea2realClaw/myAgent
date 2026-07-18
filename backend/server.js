@@ -1263,16 +1263,20 @@ async function handleExecStream(ws, session, msg) {
 // ============================================================
 
 async function classifyQuestion(llm, userMessage) {
-  const trimmed = userMessage.trim();
+  const trimmed = userMessage.trim().toLowerCase();
+
+  // ① 含 URL → 必然需要联网/工具（web_fetch / web_search / shell），直接判 complex，跳过 LLM
+  if (/https?:\/\//i.test(trimmed)) return 'complex';
 
   // Action words that always trigger complex decomposition (even if short)
   const actionWords = [
     '搜索', '查找', '找', '查', '读', '写', '改', '删', '创建',
     '执行', '运行', '安装', '下载', '上传',
-    '分析', '统计', '对比', '比较', '列出', '显示', '打开',
+    '分析', '统计', '对比', '比较', '列出', '显示', '打开', '查看', '看看', '浏览',
+    'github', '分支', 'branches', 'branch', '仓库', 'repo', 'api', '网页', '网站',
     'search', 'find', 'read', 'write', 'edit', 'delete', 'create',
     'run', 'exec', 'install', 'download', 'upload',
-    'analyze', 'list', 'grep', 'glob', 'fetch', 'curl',
+    'analyze', 'list', 'grep', 'glob', 'fetch', 'curl', 'browse', 'open',
   ];
   for (const aw of actionWords) {
     if (trimmed.includes(aw)) return 'complex';
@@ -1329,29 +1333,8 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
   // 1) 播种 wire（system + 历史），内核会原地增长它
   const wire = [{ role: 'system', content: system }, ...history.slice(-10)];
 
-  // 2) 工具 schema（复杂路径才带工具；简单路径纯文本）
-  const toolSchemas = useTools ? getAllOpenAIToolSchemas() : [];
-  const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
-
-  // 3) openRoundStream：开 LLM 流，带工具
-  const openRoundStream = async function* (_roundNo, sendWire) {
-    let frames = [];
-    try {
-      for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
-        if (chunk.type === 'text') frames.push({ type: 'chunk', text: chunk.content });
-        else if (chunk.type === 'tool_call') frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments });
-      }
-      frames.push({ type: 'end', payload: {} });
-    } catch (e) {
-      frames.push({ type: 'error', message: e.message });
-    }
-    for (const f of frames) yield f;
-  };
-
-  // 4) toolExecutor：并行执行；agent/skill 特殊处理
+  // 2) toolExecutor / buildToolMetas 不依赖是否带工具，复用
   const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
-
-  // 5) buildToolMetas
   const buildToolMetas = (rawToolCalls, roundNo) =>
     rawToolCalls.map((tc, i) => {
       const name = tc.name || (tc.function && tc.function.name) || 'unknown';
@@ -1363,36 +1346,66 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
   const executedTools = [];
   let finalText = '';
 
-  try {
-    for await (const kev of agentKernel.run({
-      wireMessages: wire,
-      openRoundStream,
-      toolExecutor,
-      buildToolMetas,
-      maxRounds: config.maxRounds || 16,
-      abortCheck: () => session.stopRequested === true,
-      modelHint: llmConfig.model,
-    })) {
-      const mapped = adaptKernelEventToWs(kev, { ws, executedTools });
-      if (mapped) {
-        // executedTools 记录（用于 done 展示）
-        if (mapped.__record) {
-          executedTools.push(mapped.__record);
-          continue;
+  // 单趟内核运行：withTools 决定是否带工具 schema；buffer=true 时不把事件推给前端（仅缓存），
+  // 用于 simple 路径“先探后发”，避免把模型退化出的 invocation 垃圾文本刷给前端。
+  const runPass = async (withTools, buffer) => {
+    const toolSchemas = withTools ? getAllOpenAIToolSchemas() : [];
+    const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
+    const openRoundStream = async function* (_roundNo, sendWire) {
+      let frames = [];
+      try {
+        for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
+          if (chunk.type === 'text') frames.push({ type: 'chunk', text: chunk.content });
+          else if (chunk.type === 'tool_call') frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments });
         }
-        broadcast(ws, mapped);
+        frames.push({ type: 'end', payload: {} });
+      } catch (e) {
+        frames.push({ type: 'error', message: e.message });
       }
+      for (const f of frames) yield f;
+    };
+    const buffered = [];
+    try {
+      for await (const kev of agentKernel.run({
+        wireMessages: wire,
+        openRoundStream,
+        toolExecutor,
+        buildToolMetas,
+        maxRounds: config.maxRounds || 16,
+        abortCheck: () => session.stopRequested === true,
+        modelHint: llmConfig.model,
+      })) {
+        const mapped = adaptKernelEventToWs(kev, { ws: buffer ? null : ws, executedTools });
+        if (!mapped) continue;
+        if (mapped.__record) { executedTools.push(mapped.__record); continue; }
+        if (buffer) buffered.push(mapped);
+        else broadcast(ws, mapped);
+      }
+    } catch (err) {
+      broadcast(ws, { type: 'error', message: err.message });
+      return { content: '', error: err.message };
     }
-  } catch (err) {
-    broadcast(ws, { type: 'error', message: err.message });
-    return { content: '', error: err.message };
+    const text = identity.filterOutput(wireToFinalText(wire));
+    return { content: text, buffered };
+  };
+
+  // 3) 先按分类跑一趟；simple 路径先缓冲（不刷给前端）
+  const firstPass = await runPass(useTools, /* buffer */ !useTools);
+  if (firstPass.error) return { content: '' };
+
+  // 4) 兜底安全网：simple 路径下模型若退化成输出“未执行的工具调用”JSON，升级为 complex 重跑
+  if (!useTools && looksLikeInvocation(firstPass.content)) {
+    broadcast(ws, { type: 'thinking', message: '🔧 检测到需要调用工具，切换为 agentic 模式重新执行...' });
+    const secondPass = await runPass(true, /* buffer */ false);
+    if (secondPass.error) return { content: '' };
+    finalText = secondPass.content;
+  } else {
+    finalText = firstPass.content;
+    // 把缓冲的 simple 路径输出补发给前端
+    for (const f of firstPass.buffered) broadcast(ws, f);
   }
 
-  // 从 wire 取最终答案（最后一条非哨兵 assistant 文本）
-  finalText = wireToFinalText(wire);
-  finalText = identity.filterOutput(finalText);
-
-  // 兜底：模型在带工具场景下可能返回空响应（免费档限流 / 工具调用支持不稳定）。
+  // 5) 空响应兜底：模型在带工具场景下可能返回空响应（免费档限流 / 工具调用支持不稳定）。
   // 避免前端收到空白答案，给出明确提示而非静默空内容。
   if (!finalText || finalText.trim() === '') {
     if (executedTools.length > 0) {
@@ -1598,7 +1611,7 @@ function adaptKernelEventToWs(kev, { ws, executedTools }) {
       for (const [name, , callId] of kev.toolMetas) {
         if (name === 'agent') continue;
         const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
-        broadcast(ws, { type: 'tool_call', tool: name, args });
+        if (ws) broadcast(ws, { type: 'tool_call', tool: name, args });
         executedTools.push({ id: callId, title: `${name}(${JSON.stringify(args).slice(0, 80)})`, status: 'running' });
       }
       return null;
@@ -1607,7 +1620,7 @@ function adaptKernelEventToWs(kev, { ws, executedTools }) {
     case 'finished':
       return null; // 由 done 收尾
     case 'max_rounds_reached':
-      broadcast(ws, { type: 'thinking', message: `⚠️ 达到最大回合(${kev.maxRounds})，停止以避免无限循环` });
+      if (ws) broadcast(ws, { type: 'thinking', message: `⚠️ 达到最大回合(${kev.maxRounds})，停止以避免无限循环` });
       return null;
     case 'aborted':
       return null;
@@ -1629,6 +1642,19 @@ function wireToFinalText(wire) {
     }
   }
   return '';
+}
+
+// 检测模型是否在「无工具可用」的简单路径下退化成输出了“未执行的工具/技能调用”JSON。
+// 例如 { "invocation": "deep-search", "query": "..." } 或 { "tool": "...", "arguments": ... }。
+// 命中则说明本应走带工具的 complex 路径，需要升级重跑。
+function looksLikeInvocation(text) {
+  if (!text || typeof text !== 'string') return false;
+  return (
+    /\{\s*"invocation"/i.test(text) ||
+    /\{\s*"tool"\s*:/i.test(text) ||
+    /\{\s*"command"\s*:/i.test(text) ||
+    /\{\s*"name"\s*:\s*"(web_fetch|web_search|shell_execute|python_execute|http_request|file_read|file_write|file_edit|file_list|file_glob|file_grep|agent|skill)"/i.test(text)
+  );
 }
 
 // ============================================================
