@@ -26,13 +26,13 @@ const LOG_DIR = path.join(ROOT_DIR, 'logs');
 
 const CONFIG = {
   serverJs: SERVER_JS,
-  port: process.env.PORT || 3737,
-  controlPort: process.env.CONTROL_PORT || 13737,
+  port: 3737,
+  controlPort: 13737,
   maxRestarts: 10,          // Maximum restarts in 10 minutes
   restartWindow: 10 * 60 * 1000, // 10 minutes
   restartDelay: 3000,       // Delay between restarts (3s)
   gracefulTimeout: 30000,   // Wait 30s for graceful shutdown
-  healthCheckUrl: `http://127.0.0.1:${process.env.PORT || 3737}/api/health`,
+  healthCheckUrl: 'http://127.0.0.1:3737/api/health',
   healthCheckTimeout: 5000,  // 5s timeout for health check
   startupTimeout: 15000,     // 15s for server to start
   logFile: path.join(LOG_DIR, 'agent-webui-daemon.log'),
@@ -115,7 +115,7 @@ async function zeroDowntimeRestart() {
       cwd: ROOT_DIR,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
-      env: { ...process.env, no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
+      env: { ...process.env, PORT: String(CONFIG.port), no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
     });
     newProcess.unref();
 
@@ -281,7 +281,7 @@ function startServer() {
     cwd: ROOT_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
-    env: { ...process.env, no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
+    env: { ...process.env, PORT: String(CONFIG.port), no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
   });
   serverProcess.unref();
 
