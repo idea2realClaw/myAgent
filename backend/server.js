@@ -1470,6 +1470,9 @@ async function classifyQuestion(llm, userMessage) {
     'search', 'find', 'read', 'write', 'edit', 'delete', 'create',
     'run', 'exec', 'install', 'download', 'upload',
     'analyze', 'list', 'grep', 'glob', 'fetch', 'curl', 'browse', 'open',
+    // 实时金融 / 行情查询：必须走带工具路径去真实拉取数据
+    '价格', '股价', '行情', '市值', '指数', '汇率', '基金', '涨跌', '多少', '报价',
+    'etf', 'stock', 'price', 'quote', 'ticker',
   ];
   for (const aw of actionWords) {
     if (trimmed.includes(aw)) return 'complex';
@@ -1498,6 +1501,119 @@ async function classifyQuestion(llm, userMessage) {
     // Fallback: if LLM call fails, default to complex (safe choice)
     return 'complex';
   }
+}
+
+// ============================================================
+// 股票价格硬路由 —— 识别"X 价格/行情"类查询，强制调真实工具再总结，杜绝编造
+// ============================================================
+
+// 常见非股票代码词（避免把普通英文词误当代码）
+const STOCK_STOP_WORDS = new Set([
+  'ETF', 'AI', 'API', 'US', 'CN', 'HK', 'UK', 'OK', 'THE', 'AND', 'FOR', 'WEB', 'APP', 'GET',
+  'SET', 'NEW', 'TOP', 'LOW', 'HIGH', 'OPEN', 'CLOSE', 'BUY', 'SELL', 'PRICE', 'FIELD', 'FILE',
+  'CODE', 'DATA', 'TYPE', 'NAME', 'TEXT', 'JSON', 'HTML', 'URL', 'HTTP', 'SHELL', 'QUERY', 'TEST',
+  'TRUE', 'FALSE', 'NULL', 'NONE', 'ALL', 'RMB', 'USD', 'CNY', 'HKD', 'EUR', 'JPY', 'BTC', 'ETH',
+  'STOCK', 'QUOTE', 'TICKER', 'NASDAQ', 'PRICES', 'ETF',
+]);
+// 中文股票名 → 代码
+const STOCK_NAME_MAP = {
+  '腾讯': '0700.HK', '腾讯控股': '0700.HK',
+  '阿里': '9988.HK', '阿里巴巴': '9988.HK',
+  '美团': '3690.HK', '小米': '1810.HK', '京东': '9618.HK', '网易': '9999.HK', '百度': '9888.HK',
+  '苹果': 'AAPL', '微软': 'MSFT', '谷歌': 'GOOGL', '亚马逊': 'AMZN', '特斯拉': 'TSLA',
+  '英伟达': 'NVDA', '高通': 'QCOM', 'Meta': 'META', '脸书': 'META',
+  '贵州茅台': '600519.SS', '宁德时代': '300750.SZ', '招商银行': '600036.SS',
+  '平安银行': '000001.SZ', '万科': '000002.SZ',
+};
+// 含这些词视为"深度分析"，交给 Agent 循环（循环内也会调 stock_price 工具）
+const STOCK_DEEP_WORDS = ['分析', '为什么', '原因', '对比', '比较', '报告', '预测', '走势', '推荐', '该买', '该卖', '怎么看', '如何', '历史', 'k线'];
+
+function detectStockPriceQuery(text) {
+  const t = (text || '').trim();
+  if (!t) return null;
+  // 剥离 "/stock-price" 命令前缀，避免把 stock/price 误当成代码
+  let work = t;
+  const cmdMatch = work.match(/^\/stock[-_]?price\b\s*/i);
+  if (cmdMatch) work = work.slice(cmdMatch[0].length).trim();
+  const lower = work.toLowerCase();
+  const isPriceIntent = /(价格|股价|行情|报价|涨跌|市值|多少|实时|净值|基金)/.test(lower)
+    || /\b(price|quote|stock|etf|ticker|nasdaq)\b/.test(lower)
+    || cmdMatch != null;
+  if (!isPriceIntent) return null;
+  // 深度分析类交给 Agent 循环处理（不抢占）
+  if (STOCK_DEEP_WORDS.some((w) => lower.includes(w.toLowerCase()))) return null;
+  // 1) 中文名映射
+  for (const [cn, code] of Object.entries(STOCK_NAME_MAP)) {
+    if (lower.includes(cn.toLowerCase())) return { symbol: code, raw: cn };
+  }
+  // 2) 带市场后缀代码：0700.HK / 600519.SS / TLT.US
+  const m = work.match(/\b(\d{4,6}\.(?:HK|SS|SZ))\b/i) || work.match(/\b([A-Za-z]{1,6}\.(?:HK|US|L|O|PA|N))\b/i);
+  if (m) return { symbol: m[1].toUpperCase(), raw: m[1] };
+  // 3) 纯字母代码（2-5 字母，排除常见非代码词）
+  const codes = work.match(/\b[A-Za-z]{2,5}\b/g) || [];
+  for (const c of codes) {
+    const up = c.toUpperCase();
+    if (STOCK_STOP_WORDS.has(up)) continue;
+    if (/^[A-Z]+$/.test(up)) return { symbol: up, raw: c };
+  }
+  return null;
+}
+
+// 硬路由执行：调真实工具拿数据 → 让模型基于真实数据做自然语言总结（无权编造）
+async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMessage) {
+  broadcast(ws, { type: 'tool_call', tool: 'stock_price', args: { symbol: q.symbol } });
+  let res;
+  try {
+    res = await toolRegistry.execute({ name: 'stock_price', arguments: { symbol: q.symbol } });
+  } catch (e) {
+    res = { success: false, error: e.message };
+  }
+  const data = res.success ? res.result : null;
+  const errMsg = !res.success ? (res.error || '执行失败') : (data && data.error ? data.error : null);
+
+  if (errMsg) {
+    const out = `抱歉，暂时无法获取 ${q.symbol} 的实时行情数据（${errMsg}）。请稍后重试或检查网络连通性。`;
+    broadcast(ws, { type: 'tool_result', success: false, output: out });
+    history.push({ role: 'assistant', content: out });
+    broadcast(ws, { type: 'done', content: out, subtasks: [{ id: 'stock_price', title: `查询 ${q.symbol} 行情`, status: 'done' }] });
+    return;
+  }
+
+  // 透明展示真实原始结果
+  broadcast(ws, { type: 'tool_result', success: true, output: JSON.stringify(data, null, 2) });
+
+  // 用 LLM 基于【真实数据】做自然语言总结；prompt 强制"原样使用数字、严禁编造"
+  const summaryPrompt = [
+    '你是行情播报助手。下面是从 Yahoo Finance 获取到的【真实】行情数据（JSON）。',
+    '请用简体中文写成一段自然语言总结，必须包含：标的名称与代码、最新价、涨跌额与涨跌幅、',
+    '今开/最高/最低（若有）、成交量、货币、交易所、更新时间。',
+    '所有数字必须原样使用，严禁修改、严禁编造或补充任何数据里没有的数字。不要把原始 JSON 再贴一遍。',
+    '',
+    JSON.stringify(data, null, 2),
+  ].join('\n');
+
+  let summary = null;
+  try {
+    summary = await llm.chat([{ role: 'user', content: summaryPrompt }], { temperature: 0.3 });
+  } catch (e) {
+    summary = null;
+  }
+
+  let answer;
+  if (summary && summary.trim()) {
+    answer = summary.trim();
+  } else {
+    const sign = (data.change >= 0 ? '+' : '');
+    answer = `${data.name || data.symbol}（${data.symbol}）最新价 ${data.price} ${data.currency}，` +
+      `涨跌 ${sign}${data.change}（${sign}${data.change_percent}%）。` +
+      (data.open != null ? `今开 ${data.open}，` : '') +
+      (data.high != null ? `最高 ${data.high}，` : '') +
+      (data.low != null ? `最低 ${data.low}。` : '') +
+      `成交量 ${data.volume || 'N/A'}，交易所 ${data.exchange || 'N/A'}。更新时间 ${data.market_time || 'N/A'}。数据来源：${data.source}。`;
+  }
+
+  history.push({ role: 'assistant', content: answer });
+  broadcast(ws, { type: 'done', content: answer, subtasks: [{ id: 'stock_price', title: `查询 ${q.symbol} 行情`, status: 'done' }] });
 }
 
 function buildLLMMessages(system, history) {
@@ -1942,8 +2058,11 @@ async function handleChat(sessionId, session, msg) {
   // ── 技能直接执行（/skill-name input） ──
   // 用户在消息里以「/技能名」开头 → 解析 SKILL.md 中的执行命令并真跑（优先级高于 LLM 循环）
   if (userMessage.trim().startsWith('/')) {
-    await handleSkillExecution(ws, session, userMessage);
-    return;
+    // stock-price 放行到下方硬路由（保证真实数据 + 自然语言总结），其余技能走原执行路径
+    if (!/^\/stock[-_]?price\b/i.test(userMessage.trim())) {
+      await handleSkillExecution(ws, session, userMessage);
+      return;
+    }
   }
 
   // Check API key (skip for local provider)
@@ -1971,6 +2090,13 @@ async function handleChat(sessionId, session, msg) {
   history.push({ role: 'user', content: userMessage });
 
   const system = buildSystemPrompt(cfg.provider);
+
+  // ── 股票价格硬路由：识别"X 价格/行情"查询 → 直接调真实工具再总结，杜绝编造 ──
+  const priceQuery = detectStockPriceQuery(userMessage);
+  if (priceQuery) {
+    await handleStockPriceQuery(ws, session, history, llm, cfg, priceQuery, userMessage);
+    return;
+  }
 
   // ── 统一 Agent 循环（移植自 qaimodelbuilder 共享回合内核） ──
   // 简单问题 → 纯文本循环（无工具）；复杂问题 → 带工具的 agentic 循环

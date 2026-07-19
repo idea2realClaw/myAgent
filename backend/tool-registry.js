@@ -369,7 +369,111 @@ class ToolRegistry {
         }
       },
     });
-    
+
+    // ── Stock Price（实时股价 / ETF 行情，数据源 Yahoo Finance）──
+    this.register({
+      name: 'stock_price',
+      description: '获取股票/ETF 的实时行情数据（数据源 Yahoo Finance，覆盖美股/港股/A股）。输入代码如 TLT、AAPL、NVDA、0700.HK、600519.SS、9988.HK。返回：最新价、涨跌额、涨跌幅、今开、最高、最低、成交量、昨收、货币、交易所、更新时间。当用户询问"某股票/ETF 价格"、"股价"、"行情"、"涨跌多少"、"市值"等任何实时金融数据时，必须调用此工具获取真实数据，绝对不能凭记忆或训练知识编造数字。',
+      parameters: {
+        symbol: { type: 'string', description: '股票/ETF 代码，如 TLT、AAPL、0700.HK、600519.SS。多个用逗号分隔，如 AAPL,TSLA。', required: true },
+        market: { type: 'string', description: '市场提示（US/HK/CN），可省略，工具会自动识别代码。', required: false },
+      },
+      aliases: ['stock', 'stock_quote', 'get_stock_price', 'quote', 'etf_price'],
+      handler: async ({ symbol, market }) => {
+        if (!symbol) throw new Error('symbol is required');
+        const syms = String(symbol).split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+        if (syms.length === 0) throw new Error('symbol is required');
+
+        const round2 = (x) => (x == null || Number.isNaN(x)) ? null : Math.round(x * 100) / 100;
+        const fmtVol = (v) => {
+          if (v == null || Number.isNaN(v)) return null;
+          if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+          if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+          return String(v);
+        };
+
+        async function fetchOne(sym) {
+          const hosts = [
+            'https://query1.finance.yahoo.com',
+            'https://query2.finance.yahoo.com',
+          ];
+          let lastErr;
+          for (const host of hosts) {
+            const url = `${host}/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`;
+            const controller = new AbortController();
+            const t = setTimeout(() => controller.abort(), 12000);
+            try {
+              const resp = await fetch(url, {
+                signal: controller.signal,
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  'Accept': 'application/json',
+                },
+              });
+              if (!resp.ok) { lastErr = `HTTP ${resp.status}`; continue; }
+              const d = await resp.json();
+              const res = d?.chart?.result?.[0];
+              if (!res) { lastErr = d?.chart?.error?.description || 'no data'; continue; }
+              const meta = res.meta;
+              const quotes = res.indicators?.quote?.[0];
+              // 优先使用 meta 中的实时字段（最可靠，即使 quotes 数组为 null/空也可使用）
+              let lastClose = null, lastOpen = null, lastHigh = null, lastLow = null, lastVol = null;
+              if (quotes && Array.isArray(quotes.closes)) {
+                let li = quotes.closes.length - 1;
+                while (li >= 0 && (quotes.closes[li] == null)) li--;
+                if (li >= 0) {
+                  lastClose = quotes.closes[li];
+                  lastOpen = quotes.opens?.[li];
+                  lastHigh = quotes.highs?.[li];
+                  lastLow = quotes.lows?.[li];
+                  lastVol = quotes.volumes?.[li];
+                }
+              }
+              const price = (meta.regularMarketPrice != null) ? meta.regularMarketPrice : lastClose;
+              if (price == null) { lastErr = 'no price data'; continue; }
+              const open = (meta.regularMarketOpen != null) ? meta.regularMarketOpen : lastOpen;
+              const high = (meta.regularMarketDayHigh != null) ? meta.regularMarketDayHigh : lastHigh;
+              const low = (meta.regularMarketDayLow != null) ? meta.regularMarketDayLow : lastLow;
+              const volume = (meta.regularMarketVolume != null) ? meta.regularMarketVolume : lastVol;
+              let prevClose = meta.chartPreviousClose;
+              if (prevClose == null && lastClose != null) prevClose = lastClose;
+              const change = (prevClose != null) ? (price - prevClose) : 0;
+              const changePct = (prevClose) ? (change / prevClose * 100) : 0;
+              const t0 = meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000) : null;
+              return {
+                symbol: meta.symbol,
+                name: meta.shortName || meta.longName || meta.symbol,
+                price: round2(price),
+                change: round2(change),
+                change_percent: round2(changePct),
+                open: round2(open),
+                high: round2(high),
+                low: round2(low),
+                volume: fmtVol(volume),
+                previous_close: round2(prevClose),
+                currency: meta.currency || 'USD',
+                exchange: meta.exchangeName,
+                market_time: t0 ? t0.toISOString() : null,
+                source: 'Yahoo Finance',
+              };
+            } catch (e) {
+              lastErr = e.message;
+            } finally {
+              clearTimeout(t);
+            }
+          }
+          return { symbol: sym, error: lastErr || 'unknown error' };
+        }
+
+        const results = [];
+        for (const s of syms) {
+          results.push(await fetchOne(s));
+        }
+        if (results.length === 1) return results[0];
+        return { symbols: syms, results };
+      },
+    });
+
     // ── Python Execute ──
     this.register({
       name: 'python_execute',
