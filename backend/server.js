@@ -1532,8 +1532,17 @@ const STOCK_NAME_MAP = {
   '贵州茅台': '600519.SS', '宁德时代': '300750.SZ', '招商银行': '600036.SS',
   '平安银行': '000001.SZ', '万科': '000002.SZ',
 };
-// 含这些词视为"深度分析"，交给 Agent 循环（循环内也会调 stock_price 工具）
-const STOCK_DEEP_WORDS = ['分析', '为什么', '原因', '对比', '比较', '报告', '预测', '走势', '推荐', '该买', '该卖', '怎么看', '如何', '历史', 'k线'];
+// 含这些词 → 问题超出"当前快照"工具能力（需历史序列 / 时间区间 / 深度分析），
+// 不再硬调 stock_price，交给 Agent 循环理解并分解任务
+const STOCK_LOOP_WORDS = [
+  // 深度分析
+  '分析', '为什么', '原因', '对比', '比较', '报告', '预测', '推荐', '该买', '该卖', '怎么看', '如何', '估值', '分红',
+  // 历史 / 时间区间 / 序列（如"过去五天""近一周""历史价格"）
+  '历史', 'k线', '走势', '过去', '近期', '最近', '几天', '一周', '两周', '一个月', '两个月', '一年', '半年',
+  '本周', '本月', '今年', '上周', '上月', '以来', '区间', '每日', '每天', '趋势', '表现',
+  // 英文
+  'history', 'historical', 'past', 'last', 'recent', 'since', 'from', 'trend', 'weekly', 'daily', 'monthly', 'yearly',
+];
 
 function detectStockPriceQuery(text) {
   const t = (text || '').trim();
@@ -1547,8 +1556,8 @@ function detectStockPriceQuery(text) {
     || /\b(price|quote|stock|etf|ticker|nasdaq)\b/.test(lower)
     || cmdMatch != null;
   if (!isPriceIntent) return null;
-  // 深度分析类交给 Agent 循环处理（不抢占）
-  if (STOCK_DEEP_WORDS.some((w) => lower.includes(w.toLowerCase()))) return null;
+  // 超出"当前快照"能力的问题（历史/区间/分析）→ 交给 Agent 循环理解并分解，不硬抢
+  if (STOCK_LOOP_WORDS.some((w) => lower.includes(w.toLowerCase()))) return null;
   // 1) 中文名映射
   for (const [cn, code] of Object.entries(STOCK_NAME_MAP)) {
     if (lower.includes(cn.toLowerCase())) return { symbol: code, raw: cn };
@@ -2109,7 +2118,8 @@ async function handleChat(sessionId, session, msg) {
 
   const system = buildSystemPrompt(cfg.provider);
 
-  // ── 股票价格硬路由：识别"X 价格/行情"查询 → 直接调真实工具再总结，杜绝编造 ──
+  // ── 股票价格硬路由：仅处理"当前快照"类查询（如"TLT 股价"）→ 直接调真实工具再总结，杜绝编造 ──
+  // ── 历史/区间/分析类（如"过去五天""走势"）返回 null，交由下方 Agent 循环理解并分解任务 ──
   const priceQuery = detectStockPriceQuery(userMessage);
   if (priceQuery) {
     await handleStockPriceQuery(ws, session, history, llm, cfg, priceQuery, userMessage);
