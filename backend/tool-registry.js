@@ -399,7 +399,7 @@ class ToolRegistry {
           ];
           let lastErr;
           for (const host of hosts) {
-            const url = `${host}/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`;
+            const url = `${host}/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`;
             const controller = new AbortController();
             const t = setTimeout(() => controller.abort(), 12000);
             try {
@@ -435,10 +435,20 @@ class ToolRegistry {
               const high = (meta.regularMarketDayHigh != null) ? meta.regularMarketDayHigh : lastHigh;
               const low = (meta.regularMarketDayLow != null) ? meta.regularMarketDayLow : lastLow;
               const volume = (meta.regularMarketVolume != null) ? meta.regularMarketVolume : lastVol;
-              let prevClose = meta.chartPreviousClose;
-              if (prevClose == null && lastClose != null) prevClose = lastClose;
-              const change = (prevClose != null) ? (price - prevClose) : 0;
-              const changePct = (prevClose) ? (change / prevClose * 100) : 0;
+              // 涨跌基准必须用「上一交易日收盘」。
+              // 注意：chartPreviousClose 的值取决于 range——range=5d 时它是 5 天前的收盘，
+              // 会严重扭曲涨跌额/幅（QCOM 曾因此算出 -9.19% 的假跌幅）。只有 range=1d 时它
+              // 才等于上一交易日收盘，所以上面的查询已改为 range=1d。
+              // 取值优先级：regularMarketPreviousClose > previousClose > chartPreviousClose > 数组末值
+              let prevClose = (meta.regularMarketPreviousClose != null) ? meta.regularMarketPreviousClose
+                            : (meta.previousClose != null) ? meta.previousClose
+                            : (meta.chartPreviousClose != null) ? meta.chartPreviousClose
+                            : (lastClose != null ? lastClose : null);
+              // 优先用 Yahoo 自带的涨跌额/幅，避免二次计算误差；否则用上一交易日收盘推算
+              const change = (meta.regularMarketChange != null) ? meta.regularMarketChange
+                            : (prevClose != null ? price - prevClose : 0);
+              const changePct = (meta.regularMarketChangePercent != null) ? meta.regularMarketChangePercent
+                            : (prevClose ? (change / prevClose * 100) : 0);
               const t0 = meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000) : null;
               return {
                 symbol: meta.symbol,
