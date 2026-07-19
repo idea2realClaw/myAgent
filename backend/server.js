@@ -756,6 +756,7 @@ function buildSystemPrompt(provider = 'openai') {
 - When a user loads a skill by name, inject the skill's full content and follow its instructions.
 - Decompose complex tasks into parallel subtasks when beneficial.
 - Be direct, thorough, and resourceful.
+- 当技能或工具返回结构化数据（JSON、表格、原始 API 输出等）时，必须先用自然语言向用户做总结：先给关键结论，再列出重要数字（如价格、涨跌幅、成交量、更新时间等），绝不要直接把原始 JSON 或原始数据原样粘贴给用户。
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
   // Append tool usage instructions (parameterized)
@@ -1337,7 +1338,18 @@ async function handleSkillExecution(ws, session, userMessage) {
     if (stderr) console.warn(`[Skill] ${skillName} stderr:`, stderr);
     const output = stdout || 'Skill 执行完成（无输出）';
     broadcast(ws, { type: 'tool_result', success: true, output: truncateToolResult(output) });
-    const answer = `## Skill 执行结果: ${skillName}\n\n${output}`;
+
+    // 用 LLM 把原始执行结果转成自然语言总结，作为最终回答（原始结果已在 tool_result 透明展示）
+    let answer = `## Skill 执行结果: ${skillName}\n\n${output}`;
+    try {
+      const llm = buildLlmFromSession(session);
+      broadcast(ws, { type: 'thinking', message: '✍️ 正在生成自然语言总结...' });
+      const summary = await summarizeSkillResult(llm, userMessage, output);
+      answer = summary;
+    } catch (sumErr) {
+      console.warn('[Skill] 自然语言总结生成失败，回退原始结果:', sumErr.message);
+    }
+
     history.push({ role: 'assistant', content: answer });
     broadcast(ws, {
       type: 'done',
@@ -1351,6 +1363,35 @@ async function handleSkillExecution(ws, session, userMessage) {
     history.push({ role: 'assistant', content: msgText });
     broadcast(ws, { type: 'done', content: msgText, subtasks: [] });
   }
+}
+
+// 根据 session 配置构造 LLM（与 runSkillViaAgentLoop 保持一致）
+function buildLlmFromSession(session) {
+  const cfg = { ...loadConfig(), ...(session && session.config) };
+  return new LLMAdapter({
+    provider: cfg.provider || 'qgenie',
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    baseURL: cfg.provider === 'openrouter'
+      ? (cfg.baseURL || 'https://openrouter.ai/api/v1')
+      : cfg.baseURL || undefined,
+  });
+}
+
+// 用 LLM 把技能的原始执行结果转成自然语言总结（失败则调用方回退到原始结果）
+async function summarizeSkillResult(llm, userQuestion, rawOutput) {
+  const sys = [
+    '你是一名数据助手的总结员。用户用自然语言提出了一个问题，某个技能返回了结构化或原始数据。',
+    '请用与用户相同的语言（中文用户用中文），写一段简洁、口语化、直接回答用户问题的自然语言总结。',
+    '要点：先给关键结论，再列出重要数字（例如价格、涨跌幅、成交量、更新时间等），必要时补充一句简短说明。',
+    '不要原样重复原始 JSON 或大段结构化数据，不要用代码块包裹原始输出。控制在 3-5 句话。',
+  ].join('\n');
+  const messages = [
+    { role: 'system', content: sys },
+    { role: 'user', content: `用户问题：${userQuestion}\n\n技能返回的原始结果：\n${rawOutput}` },
+  ];
+  const summary = await llm.chat(messages, { temperature: 0.3, maxTokens: 500 });
+  return (summary || '').trim() || rawOutput;
 }
 
 // 指令型技能：交给统一 Agent 循环执行（模型会按 SKILL.md 指引调用工具真正干活）
@@ -1660,11 +1701,19 @@ async function runSkillTool(args, callId, { ws, session }) {
       });
       if (stderr) console.warn(`[skill tool] ${name} stderr:`, stderr);
       const output = stdout || 'Skill 执行完成（无输出）';
+      let resultText = `## Skill 执行结果: ${name}\n\n${output}`;
+      try {
+        const llm = buildLlmFromSession(session);
+        const summary = await summarizeSkillResult(llm, args.question || args.query || name, output);
+        resultText = summary;
+      } catch (sumErr) {
+        console.warn('[skill tool] 自然语言总结生成失败，回退原始结果:', sumErr.message);
+      }
       return {
         partial: false,
         callId,
         toolName: 'skill',
-        resultText: `## Skill 执行结果: ${name}\n\n${output}`,
+        resultText,
         ok: true,
         durationMs: Date.now() - start,
       };
