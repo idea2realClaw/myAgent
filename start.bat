@@ -75,6 +75,17 @@ if not defined BASH_CMD (
 echo [INFO] Using bash: %BASH_CMD%
 echo.
 
+REM ============================================================
+REM Check if ports are in use; if so, kill old processes first
+REM ============================================================
+set "APP_PORT=3737"
+set "CTRL_PORT=13737"
+
+echo [INFO] Checking ports before start...
+call :free_port %APP_PORT%
+call :free_port %CTRL_PORT%
+echo.
+
 REM Change to script directory first, then run start.sh
 cd /d "%~dp0"
 echo [INFO] Working directory: %CD%
@@ -91,4 +102,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
+exit /b 0
+
+REM ============================================================
+REM Subroutine: free_port <port>
+REM Finds any process LISTENING on the given port and kills it
+REM ============================================================
+:free_port
+set "PORT=%~1"
+set "PORT_FOUND=0"
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%PORT% " ^| findstr "LISTENING"') do (
+    echo [WARN] Port %PORT% is in use by PID %%p, terminating old process...
+    taskkill /F /PID %%p >nul 2>&1
+    set "PORT_FOUND=1"
+)
+if "%PORT_FOUND%"=="1" (
+    echo [INFO] Old process on port %PORT% terminated
+    timeout /t 1 /nobreak >nul
+) else (
+    echo [INFO] Port %PORT% is free
+)
 exit /b 0
