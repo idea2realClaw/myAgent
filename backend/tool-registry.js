@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import { minimatch } from 'minimatch';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { load } from 'cheerio';
 
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -259,45 +260,113 @@ class ToolRegistry {
       },
     });
     
-    // ── Web Search ──
+    // ── Web Search（基于 Cheerio 的网页解析搜索）──
     this.register({
       name: 'web_search',
-      description: 'Search the web for information using DuckDuckGo. Use for current events, docs, research, or any online info.',
+      description: 'Search the web for information using DuckDuckGo. Use for current events, documentation, research, or any question that needs up-to-date information from the internet. Returns title, URL, and snippet for each result.',
       parameters: {
         query: { type: 'string', description: 'Search query', required: true },
         count: { type: 'number', description: 'Number of results (max 10, default 5)', required: false },
+        search_lang: { type: 'string', description: 'Search language (default: zh-CN for Chinese, en-US for English)', required: false },
       },
-      aliases: ['search', 'search_web'],
-      handler: async ({ query, count = 5 }) => {
+      aliases: ['search', 'search_web', 'webSearch'],
+      handler: async ({ query, count = 5, search_lang = 'zh-CN' }) => {
         if (!query) throw new Error('query is required');
-        
-        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-        const resp = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-        });
-        const html = await resp.text();
-        
-        const results = [];
-        const resultRegex = /<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-        const snippetRegex = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-        
-        let match;
-        let snippets = [];
-        while ((match = snippetRegex.exec(html)) !== null) {
-          snippets.push(match[1].replace(/<[^>]*>/g, ''));
-        }
-        
-        let idx = 0;
-        while ((match = resultRegex.exec(html)) !== null && results.length < count) {
-          const title = match[2].replace(/<[^>]*>/g, '').trim();
-          const snippet = snippets[idx] || '';
-          idx++;
-          if (title && !title.includes('://')) {
-            results.push({ title, url: match[1], snippet });
+
+        const maxResults = Math.min(count || 5, 10);
+
+        // Try DuckDuckGo HTML search
+        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=${search_lang}`;
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+
+        try {
+          const resp = await fetch(url, {
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': search_lang,
+            },
+          });
+
+          clearTimeout(timeout);
+
+          if (!resp.ok) {
+            throw new Error(`DuckDuckGo returned ${resp.status}`);
           }
+
+          const html = await resp.text();
+          const $ = load(html);
+
+          const results = [];
+
+          // Parse DuckDuckGo search results
+          $('.result').each((i, el) => {
+            if (results.length >= maxResults) return false;
+
+            const $el = $(el);
+            const $titleLink = $el.find('.result__a').first();
+            const title = $titleLink.text().trim();
+            let resultUrl = $titleLink.attr('href') || '';
+
+            // DuckDuckGo uses redirect URLs, extract the actual URL
+            if (resultUrl.includes('uddg=')) {
+              const match = resultUrl.match(/uddg=([^&]+)/);
+              if (match) {
+                resultUrl = decodeURIComponent(match[1]);
+              }
+            }
+
+            const $snippet = $el.find('.result__snippet').first();
+            const snippet = $snippet.text().trim();
+
+            if (title && resultUrl) {
+              results.push({
+                title,
+                url: resultUrl,
+                snippet: snippet || '',
+              });
+            }
+          });
+
+          // If no results found with .result, try alternative selectors
+          if (results.length === 0) {
+            $('a.result__a').each((i, el) => {
+              if (results.length >= maxResults) return false;
+
+              const $el = $(el);
+              const title = $el.text().trim();
+              let resultUrl = $el.attr('href') || '';
+
+              if (resultUrl.includes('uddg=')) {
+                const match = resultUrl.match(/uddg=([^&]+)/);
+                if (match) {
+                  resultUrl = decodeURIComponent(match[1]);
+                }
+              }
+
+              if (title && resultUrl) {
+                results.push({
+                  title,
+                  url: resultUrl,
+                  snippet: '',
+                });
+              }
+            });
+          }
+
+          return {
+            query,
+            results,
+            count: results.length,
+            provider: 'DuckDuckGo',
+          };
+        } catch (err) {
+          if (timeout) clearTimeout(timeout);
+          throw new Error(`web_search failed: ${err.message}`);
         }
-        
-        return { query, results, count: results.length };
       },
     });
     

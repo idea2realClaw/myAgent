@@ -10,11 +10,16 @@ import { WebSocketServer } from 'ws';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 
+const execAsync = promisify(exec);
+
 import { LLMAdapter } from './llm-adapter.js';
 import { SkillLoader } from './skill-loader.js';
+import { SkillExecutor, extractExecutionCommand } from './skill-executor.js';
 import { IdentityManager } from './identity-manager.js';
 import { TaskOrchestrator } from './task-orchestrator.js';
 import { executeTool, execStream, buildToolInstructions, TOOL_SCHEMAS, TOOL_SCHEMAS_OPENAI } from './tool-executor.js';
@@ -224,6 +229,9 @@ identity.load();
 
 const skillLoader = new SkillLoader(ROOT_DIR);
 skillLoader.load();
+
+// 技能执行器：解析 SKILL.md 中的执行命令并真正运行（确保命令完整执行，而非只给计划）
+const skillExecutor = new SkillExecutor(skillLoader, ROOT_DIR);
 
 const snapshotManager = new SnapshotManager();
 await snapshotManager.load();
@@ -898,6 +906,36 @@ app.post('/api/skills/add', (req, res) => {
   }
 });
 
+// 执行技能（/skill-name 的 REST 形态）：解析 SKILL.md 命令并真正运行
+app.post('/api/skills/:name/run', async (req, res) => {
+  const skillName = req.params.name;
+  const { input = '', execute = true } = req.body || {};
+  const skill = skillLoader.get(skillName);
+  if (!skill) {
+    return res.status(404).json({ error: `Skill not found: ${skillName}` });
+  }
+  const skillDir = path.dirname(skill.path);
+  const execCmd = extractExecutionCommand(skill.content, skillDir);
+  if (!execCmd) {
+    return res.status(422).json({
+      error: `Skill "${skillName}" has no directly executable command. It is instruction-only; invoke it in chat via /${skillName} to run through the agent loop.`,
+    });
+  }
+  const safeInput = String(input == null ? '' : input).replace(/"/g, '\\"');
+  const fullCmd = execCmd.replace(/\$1|\$INPUT|\{\{input\}\}/g, `"${safeInput}"`);
+  try {
+    const { stdout, stderr } = await execAsync(fullCmd, {
+      cwd: skillDir,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 120000,
+    });
+    if (stderr) console.warn(`[Skill API] ${skillName} stderr:`, stderr);
+    res.json({ success: true, skill: skillName, command: fullCmd, output: stdout || '' });
+  } catch (err) {
+    res.status(500).json({ success: false, skill: skillName, command: fullCmd, error: err.message });
+  }
+});
+
 // Identity status
 app.get('/api/identity', (req, res) => {
   res.json(identity.getSummary());
@@ -1224,6 +1262,120 @@ async function handleDirectExecution(ws, session, toolCall, rawInput) {
 }
 
 // ============================================================
+// Skill Execution — /skill-name input 直接执行（解析 SKILL.md 中的命令并真跑）
+// 移植自旧 main 的 handleSkillExecution，确保技能命令完整执行而非只给计划
+// ============================================================
+
+async function handleSkillExecution(ws, session, userMessage) {
+  const { history } = session;
+  // 记录用户消息到历史（slash 命令本身也作为一轮对话）
+  history.push({ role: 'user', content: userMessage });
+
+  const match = userMessage.trim().match(/^\/([^\s{]+)\s*([\s\S]*)/);
+  if (!match) {
+    const err = '无效的 skill 调用格式。请使用: /skill-name input';
+    broadcast(ws, { type: 'error', message: err });
+    history.push({ role: 'assistant', content: err });
+    broadcast(ws, { type: 'done', content: err, subtasks: [] });
+    return;
+  }
+
+  const skillName = match[1];
+  const input = match[2].trim();
+  let parsedInput = input;
+  let cmdInput = input;
+  try {
+    parsedInput = JSON.parse(input);
+    cmdInput = typeof parsedInput === 'object'
+      ? (parsedInput.question || parsedInput.input || parsedInput.query || JSON.stringify(parsedInput))
+      : input;
+  } catch { /* 纯文本输入，cmdInput 保持原文 */ }
+
+  const skill = skillLoader.get(skillName);
+  if (!skill) {
+    const available = skillLoader.getAll().map(s => s.name).join(', ');
+    const msgText = `Skill 未找到: ${skillName}\n\n可用的 skills: ${available}`;
+    broadcast(ws, { type: 'tool_call', tool: 'skill', args: { skill: skillName } });
+    broadcast(ws, { type: 'tool_result', success: false, output: msgText });
+    history.push({ role: 'assistant', content: msgText });
+    broadcast(ws, { type: 'done', content: msgText, subtasks: [] });
+    return;
+  }
+
+  broadcast(ws, { type: 'thinking', message: `🔧 执行 Skill: ${skillName}...` });
+  broadcast(ws, {
+    type: 'tool_call',
+    tool: 'skill',
+    args: { skill: skillName, input: typeof cmdInput === 'string' ? cmdInput : JSON.stringify(cmdInput) },
+  });
+
+  const skillDir = path.dirname(skill.path);
+  const execCmd = extractExecutionCommand(skill.content, skillDir);
+
+  // 无直接可执行命令 → 转交 Agent 循环，按 SKILL.md 指引用工具真正执行（而非只出计划）
+  if (!execCmd) {
+    broadcast(ws, {
+      type: 'tool_result',
+      success: true,
+      output: `Skill "${skillName}" 无直接可执行命令，转交 Agent 循环按指引执行...`,
+    });
+    await runSkillViaAgentLoop(ws, session, skillName);
+    return;
+  }
+
+  const safeInput = String(cmdInput == null ? '' : cmdInput).replace(/"/g, '\\"');
+  const fullCmd = execCmd.replace(/\$1|\$INPUT|\{\{input\}\}/g, `"${safeInput}"`);
+
+  broadcast(ws, { type: 'thinking', message: `⚙️ 运行中: ${fullCmd}` });
+
+  try {
+    const { stdout, stderr } = await execAsync(fullCmd, {
+      cwd: skillDir,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 120000,
+    });
+    if (stderr) console.warn(`[Skill] ${skillName} stderr:`, stderr);
+    const output = stdout || 'Skill 执行完成（无输出）';
+    broadcast(ws, { type: 'tool_result', success: true, output: truncateToolResult(output) });
+    const answer = `## Skill 执行结果: ${skillName}\n\n${output}`;
+    history.push({ role: 'assistant', content: answer });
+    broadcast(ws, {
+      type: 'done',
+      content: answer,
+      subtasks: [{ id: `skill_${skillName}`, title: `执行 ${skillName}`, status: 'done' }],
+    });
+  } catch (err) {
+    const msgText = `Skill 执行失败: ${err.message}`;
+    console.error(`[Skill] Error executing ${skillName}:`, err);
+    broadcast(ws, { type: 'tool_result', success: false, output: msgText });
+    history.push({ role: 'assistant', content: msgText });
+    broadcast(ws, { type: 'done', content: msgText, subtasks: [] });
+  }
+}
+
+// 指令型技能：交给统一 Agent 循环执行（模型会按 SKILL.md 指引调用工具真正干活）
+async function runSkillViaAgentLoop(ws, session, skillName) {
+  const { history, config } = session;
+  const cfg = { ...loadConfig(), ...config };
+  const llmConfig = {
+    provider: cfg.provider || 'qgenie',
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    baseURL: cfg.provider === 'openrouter'
+      ? (cfg.baseURL || 'https://openrouter.ai/api/v1')
+      : cfg.baseURL || undefined,
+  };
+  const llm = new LLMAdapter(llmConfig);
+  const system = buildSystemPrompt(cfg.provider);
+  broadcast(ws, { type: 'thinking', message: `🧠 正在按 ${skillName} 技能指引执行任务（含工具调用）...` });
+  try {
+    await runAgentLoop({ ws, session, llm, system, history, config: cfg, useTools: true });
+  } catch (err) {
+    broadcast(ws, { type: 'error', message: err.message });
+  }
+}
+
+// ============================================================
 // execStream — Real-time streaming execution
 // ============================================================
 
@@ -1437,7 +1589,7 @@ async function* makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfi
         return await runMainAgentTool(args, { ws, session, llmConfig, callId });
       }
       if (name === 'skill') {
-        return await runSkillTool(args, callId);
+        return await runSkillTool(args, callId, { ws, session });
       }
       const result = await executeTool({ name, arguments: args });
       const ok = result.success !== false;
@@ -1480,10 +1632,55 @@ async function runMainAgentTool(args, { ws, session, llmConfig, callId }) {
   return { partial: false, callId, toolName: 'agent', resultText, ok, durationMs: Date.now() - start };
 }
 
-// 主循环中 skill 工具：加载 skill 全文作为工具结果返回给模型遵循
-async function runSkillTool(args, callId) {
+// 主循环中 skill 工具：优先真正执行 SKILL.md 中的命令（确保完整执行而非只给计划）；
+// 若无直接可执行命令，则回退为加载指令全文供模型遵循（agentic 路径会进一步调用工具执行）。
+async function runSkillTool(args, callId, { ws, session }) {
   const start = Date.now();
   const name = args.name;
+  const skill = skillLoader.get(name);
+  if (!skill || !skill.enabled) {
+    return { partial: false, callId, toolName: 'skill', resultText: `Skill '${name}' not found or disabled.`, ok: false, durationMs: Date.now() - start };
+  }
+
+  // 若技能含可执行命令，且调用方请求执行（带 input 或显式 execute=true）→ 真实运行
+  const skillDir = path.dirname(skill.path);
+  const execCmd = extractExecutionCommand(skill.content, skillDir);
+  const wantExec = args.execute === true || (args.input !== undefined && args.input !== '');
+  if (execCmd && wantExec) {
+    let cmdInput = typeof args.input === 'string'
+      ? args.input
+      : (args.question || args.query || (args.input && typeof args.input === 'object' ? JSON.stringify(args.input) : ''));
+    const safeInput = String(cmdInput == null ? '' : cmdInput).replace(/"/g, '\\"');
+    const fullCmd = execCmd.replace(/\$1|\$INPUT|\{\{input\}\}/g, `"${safeInput}"`);
+    try {
+      const { stdout, stderr } = await execAsync(fullCmd, {
+        cwd: skillDir,
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 120000,
+      });
+      if (stderr) console.warn(`[skill tool] ${name} stderr:`, stderr);
+      const output = stdout || 'Skill 执行完成（无输出）';
+      return {
+        partial: false,
+        callId,
+        toolName: 'skill',
+        resultText: `## Skill 执行结果: ${name}\n\n${output}`,
+        ok: true,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return {
+        partial: false,
+        callId,
+        toolName: 'skill',
+        resultText: `Skill 执行失败: ${e.message}`,
+        ok: false,
+        durationMs: Date.now() - start,
+      };
+    }
+  }
+
+  // 否则返回指令全文（原行为）
   const injected = skillLoader.getSkillContentForInjection(name, { page: args.page || 0 });
   if (!injected) {
     return { partial: false, callId, toolName: 'skill', resultText: `Skill '${name}' not found or disabled.`, ok: false, durationMs: Date.now() - start };
@@ -1690,6 +1887,13 @@ async function handleChat(sessionId, session, msg) {
 
   if (directExec) {
     await handleDirectExecution(ws, session, directExec, userMessage);
+    return;
+  }
+
+  // ── 技能直接执行（/skill-name input） ──
+  // 用户在消息里以「/技能名」开头 → 解析 SKILL.md 中的执行命令并真跑（优先级高于 LLM 循环）
+  if (userMessage.trim().startsWith('/')) {
+    await handleSkillExecution(ws, session, userMessage);
     return;
   }
 

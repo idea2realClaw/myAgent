@@ -156,6 +156,11 @@ export class SkillLoader {
     if (!skill || !skill.enabled) return null;
     return skill.content;
   }
+
+  // 返回技能完整对象 { meta, content, path, enabled, mode }（供 skill-executor 真正执行使用）
+  get(name) {
+    return this.skills.get(name) || null;
+  }
   
   getIconPath(name) {
     const skill = this.skills.get(name);
@@ -357,7 +362,9 @@ export class SkillLoader {
       function: {
         name: 'skill',
         description:
-          'Load a skill\'s full instructions by name and follow them. ' +
+          'Load and/or execute a skill by name. ' +
+          'Pass `input` or set `execute:true` to actually RUN the skill\'s command (the command is parsed from SKILL.md and executed for real, not just described). ' +
+          'Omit `input`/`execute` to only load the skill\'s instructions as context. ' +
           'Available skills: ' + (list.map(s => s.name).join(', ') || '(none)') +
           '. Call this when the user references a skill or when a skill would help.',
         parameters: {
@@ -367,7 +374,15 @@ export class SkillLoader {
             name: {
               type: 'string',
               enum: list.map(s => s.name),
-              description: 'Name of the skill to load',
+              description: 'Name of the skill to load/execute',
+            },
+            input: {
+              type: 'string',
+              description: 'Input passed to the skill command (enables real execution)',
+            },
+            execute: {
+              type: 'boolean',
+              description: 'If true, run the skill\'s command for real instead of only loading instructions',
             },
             page: { type: 'number', description: 'Page index for long skills (default 0)' },
           },
