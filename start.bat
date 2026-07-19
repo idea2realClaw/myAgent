@@ -86,22 +86,79 @@ call :free_port %APP_PORT%
 call :free_port %CTRL_PORT%
 echo.
 
-REM Change to script directory first, then run start.sh
+REM ============================================================
+REM 调度：Windows 下用 PowerShell 完全分离地拉起 daemon
+REM （Start-Process 创建的进程不属于本 CMD 窗口的进程组，关闭窗口不会被杀）
+REM 其余子命令（stop/restart/status/logs/log）仍交给 start.sh
+REM ============================================================
 cd /d "%~dp0"
-echo [INFO] Working directory: %CD%
+set "ARG1=%~1"
+
+if "%ARG1%"=="start" goto :do_start
+if "%ARG1%"=="" goto :do_start
+
+REM 其它子命令 → 交给 start.sh
 echo [INFO] Running: start.sh %*
 echo.
-
-REM Run start.sh with arguments (start.sh handles Node.js detection internally)
 "%BASH_CMD%" -c "./start.sh %*"
-
 if errorlevel 1 (
     echo.
-    echo [ERROR] Failed to start Agent WebUI
+    echo [ERROR] Command failed
+    pause
+    exit /b 1
+)
+exit /b 0
+
+:do_start
+echo [INFO] Working directory: %CD%
+
+REM 端口清理已在上方完成（:free_port 3737 / 13737）
+set "DAEMON_JS=%CD%\backend\daemon.js"
+set "DAEMON_LOG=%CD%\logs\daemon-stdout.log"
+set "DAEMON_ERR=%CD%\logs\daemon-stderr.log"
+
+echo [INFO] Launching daemon (detached, independent of this window)...
+powershell -NoProfile -Command "Start-Process -FilePath '%NODE_PATH%\node.exe' -ArgumentList '%DAEMON_JS%' -WorkingDirectory '%CD%' -WindowStyle Hidden -RedirectStandardOutput '%DAEMON_LOG%' -RedirectStandardError '%DAEMON_ERR%'"
+if errorlevel 1 (
+    echo [ERROR] Failed to launch daemon process
     pause
     exit /b 1
 )
 
+echo [INFO] Waiting for daemon to be ready (polling control /health)...
+set "READY=0"
+where curl >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] curl not found, waiting 8s then assuming ready...
+    timeout /t 8 /nobreak >nul
+    set "READY=1"
+    goto :started
+)
+for /L %%i in (1,1,25) do (
+    for /f "delims=" %%h in ('curl -s -o nul -m 2 -w "%%{http_code}" "http://127.0.0.1:3737/api/health"') do (
+        if "%%h"=="200" (
+            set "READY=1"
+            goto :started
+        )
+    )
+    timeout /t 1 /nobreak >nul
+)
+
+:started
+if "%READY%"=="1" (
+    echo.
+    echo [INFO] ✅ Daemon started.
+    echo [INFO]    URL:     http://localhost:3737
+    echo [INFO]    Control: http://localhost:13737
+    echo [INFO]    daemon 在后台独立运行，关闭本窗口不会影响它
+) else (
+    echo.
+    echo [ERROR] Failed to start Agent WebUI
+    echo [INFO] Last 20 lines of daemon log:
+    powershell -NoProfile -Command "Get-Content '%DAEMON_LOG%' -Tail 20"
+    pause
+    exit /b 1
+)
 exit /b 0
 
 REM ============================================================

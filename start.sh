@@ -214,32 +214,51 @@ start_daemon() {
   echo "   Logs: $SCRIPT_DIR/logs/"
   echo ""
 
-  # Cross-platform nohup
-  if [ "$__OS" = "mac" ] || [ "$__OS" = "linux" ]; then
-    nohup node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 &
+  # 跨平台「彻底脱离启动窗口」地拉起 daemon：
+  # - < /dev/null 让 daemon 不占用启动终端的 stdin，避免随启动窗口关闭被杀
+  # - Linux/mac 用 setsid 创建独立会话；Windows Git Bash 用 nohup（同样重定向 stdin）
+  if [ "$__OS" = "windows" ]; then
+    nohup node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 < /dev/null &
   else
-    # Windows: use nohup (Git Bash) or start
-    nohup node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 &
+    if command -v setsid >/dev/null 2>&1; then
+      setsid node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 < /dev/null &
+    else
+      nohup node "$DAEMON_JS" > "$SCRIPT_DIR/logs/daemon-stdout.log" 2>&1 < /dev/null &
+    fi
   fi
 
   local daemon_pid=$!
   echo "   Launched (launcher PID: $daemon_pid), waiting for daemon to be ready..."
 
-  # Wait for PID file (retry every 1s, up to 10s)
+  # 成功判定：优先探测 daemon 控制端口的 /health（权威信号，200 即代表 daemon+server 都已就绪），
+  # 避免依赖 tasklist/grep 在 Windows Git Bash 子进程下偶发的误判导致「假失败」。
   local waited=0
-  while [ $waited -lt 10 ]; do
-    if [ -f "$SCRIPT_DIR/.agent-webui-daemon.pid" ]; then
-      local pid
-      pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid" 2>/dev/null || echo '')"
-      if check_process "$pid"; then
-        echo "✅ Daemon started (PID: $pid)"
-        echo "   URL: http://localhost:3737"
-        echo "   Control: http://localhost:$CONTROL_PORT"
-        echo ""
-        echo "   Press Ctrl+C to detach (daemon will keep running)"
-        echo ""
-        return 0
+  local use_curl=0
+  command -v curl >/dev/null 2>&1 && use_curl=1
+  while [ $waited -lt 20 ]; do
+    local up=0
+    if [ $use_curl -eq 1 ]; then
+      if curl -s -m 2 "http://127.0.0.1:$CONTROL_PORT/health" >/dev/null 2>&1; then
+        up=1
       fi
+    else
+      # 回退：pid 文件存在且进程存活
+      if [ -f "$SCRIPT_DIR/.agent-webui-daemon.pid" ]; then
+        local pid
+        pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid" 2>/dev/null || echo '')"
+        if check_process "$pid"; then up=1; fi
+      fi
+    fi
+    if [ $up -eq 1 ]; then
+      local pid="unknown"
+      [ -f "$SCRIPT_DIR/.agent-webui-daemon.pid" ] && pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid" 2>/dev/null || echo unknown)"
+      echo "✅ Daemon started (PID: $pid)"
+      echo "   URL: http://localhost:3737"
+      echo "   Control: http://localhost:$CONTROL_PORT"
+      echo ""
+      echo "   Press Ctrl+C to detach (daemon will keep running)"
+      echo ""
+      return 0
     fi
     sleep 1
     waited=$((waited + 1))
