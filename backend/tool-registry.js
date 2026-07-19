@@ -373,16 +373,18 @@ class ToolRegistry {
     // ── Stock Price（实时股价 / ETF 行情，数据源 Yahoo Finance）──
     this.register({
       name: 'stock_price',
-      description: '获取股票/ETF 的实时行情数据（数据源 Yahoo Finance，覆盖美股/港股/A股）。输入代码如 TLT、AAPL、NVDA、0700.HK、600519.SS、9988.HK。返回：最新价、涨跌额、涨跌幅、今开、最高、最低、成交量、昨收、货币、交易所、更新时间。当用户询问"某股票/ETF 价格"、"股价"、"行情"、"涨跌多少"、"市值"等任何实时金融数据时，必须调用此工具获取真实数据，绝对不能凭记忆或训练知识编造数字。',
+      description: '获取股票/ETF 的实时行情或历史走势数据（数据源 Yahoo Finance，覆盖美股/港股/A股）。输入代码如 TLT、AAPL、NVDA、0700.HK、600519.SS、9988.HK。默认返回当前快照：最新价、涨跌额、涨跌幅、今开、最高、最低、成交量、昨收、货币、交易所、更新时间。可选参数 range 指定历史区间（如 "5d"=过去5天、"1mo"=过去1月、"3mo"、"1y"），传入后额外返回 history 数组（每日 date/open/high/low/close/volume）。当用户询问"某股票/ETF 价格"、"股价"、"行情"、"涨跌多少"、"市值"或"过去N天/历史走势"等任何实时或历史金融数据时，必须调用此工具获取真实数据，绝对不能凭记忆或训练知识编造数字。',
       parameters: {
         symbol: { type: 'string', description: '股票/ETF 代码，如 TLT、AAPL、0700.HK、600519.SS。多个用逗号分隔，如 AAPL,TSLA。', required: true },
         market: { type: 'string', description: '市场提示（US/HK/CN），可省略，工具会自动识别代码。', required: false },
+        range: { type: 'string', description: '历史区间，如 "5d"(过去5天)、"1mo"(过去1月)、"3mo"、"1y"。传入后返回 history 数组（每日 open/high/low/close/volume）。不传则只返回当前快照。', required: false },
       },
       aliases: ['stock', 'stock_quote', 'get_stock_price', 'quote', 'etf_price'],
-      handler: async ({ symbol, market }) => {
+      handler: async ({ symbol, market, range }) => {
         if (!symbol) throw new Error('symbol is required');
         const syms = String(symbol).split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
         if (syms.length === 0) throw new Error('symbol is required');
+        const reqRange = (range && String(range).trim()) || '1d';
 
         const round2 = (x) => (x == null || Number.isNaN(x)) ? null : Math.round(x * 100) / 100;
         const fmtVol = (v) => {
@@ -399,7 +401,7 @@ class ToolRegistry {
           ];
           let lastErr;
           for (const host of hosts) {
-            const url = `${host}/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`;
+            const url = `${host}/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=${encodeURIComponent(reqRange)}`;
             const controller = new AbortController();
             const t = setTimeout(() => controller.abort(), 12000);
             try {
@@ -418,15 +420,15 @@ class ToolRegistry {
               const quotes = res.indicators?.quote?.[0];
               // 优先使用 meta 中的实时字段（最可靠，即使 quotes 数组为 null/空也可使用）
               let lastClose = null, lastOpen = null, lastHigh = null, lastLow = null, lastVol = null;
-              if (quotes && Array.isArray(quotes.closes)) {
-                let li = quotes.closes.length - 1;
-                while (li >= 0 && (quotes.closes[li] == null)) li--;
+              if (quotes && Array.isArray(quotes.close)) {
+                let li = quotes.close.length - 1;
+                while (li >= 0 && (quotes.close[li] == null)) li--;
                 if (li >= 0) {
-                  lastClose = quotes.closes[li];
-                  lastOpen = quotes.opens?.[li];
-                  lastHigh = quotes.highs?.[li];
-                  lastLow = quotes.lows?.[li];
-                  lastVol = quotes.volumes?.[li];
+                  lastClose = quotes.close[li];
+                  lastOpen = quotes.open?.[li];
+                  lastHigh = quotes.high?.[li];
+                  lastLow = quotes.low?.[li];
+                  lastVol = quotes.volume?.[li];
                 }
               }
               const price = (meta.regularMarketPrice != null) ? meta.regularMarketPrice : lastClose;
@@ -435,19 +437,36 @@ class ToolRegistry {
               const high = (meta.regularMarketDayHigh != null) ? meta.regularMarketDayHigh : lastHigh;
               const low = (meta.regularMarketDayLow != null) ? meta.regularMarketDayLow : lastLow;
               const volume = (meta.regularMarketVolume != null) ? meta.regularMarketVolume : lastVol;
-              // 涨跌基准必须用「上一交易日收盘」。
-              // 注意：chartPreviousClose 的值取决于 range——range=5d 时它是 5 天前的收盘，
-              // 会严重扭曲涨跌额/幅（QCOM 曾因此算出 -9.19% 的假跌幅）。只有 range=1d 时它
-              // 才等于上一交易日收盘，所以上面的查询已改为 range=1d。
-              // 取值优先级：regularMarketPreviousClose > previousClose > chartPreviousClose > 数组末值
-              let prevClose = (meta.regularMarketPreviousClose != null) ? meta.regularMarketPreviousClose
+              // 历史序列：range != 1d 时从 quote 数组解析每日 OHLCV（注意字段是 close 不是 closes）
+              let history = null;
+              const qArr = res.indicators?.quote?.[0];
+              const tsArr = res.timestamp || [];
+              const cArr = qArr?.close, oArr = qArr?.open, hArr = qArr?.high, lArr = qArr?.low, vArr = qArr?.volume;
+              if (Array.isArray(cArr) && cArr.length > 1) {
+                history = [];
+                for (let i = 0; i < cArr.length; i++) {
+                  const dt = tsArr[i] ? new Date(tsArr[i] * 1000) : null;
+                  history.push({
+                    date: dt ? dt.toISOString().slice(0, 10) : null,
+                    open: round2(oArr?.[i]), high: round2(hArr?.[i]),
+                    low: round2(lArr?.[i]), close: round2(cArr[i]),
+                    volume: fmtVol(vArr?.[i]),
+                  });
+                }
+              }
+              // 涨跌基准：优先「上一交易日收盘」。注意 chartPreviousClose 随 range 变化，
+              // range=5d 时它是 5 天前收盘（会算出假跌幅），只有 range=1d 才等于上一交易日收盘。
+              // 历史查询（history 存在）时，直接用历史序列末两根 K 线算涨跌，最准确且不受 range 污染。
+              const useHistoryBase = history && history.length >= 2;
+              let prevClose = useHistoryBase ? history[history.length - 2].close
+                            : (meta.regularMarketPreviousClose != null) ? meta.regularMarketPreviousClose
                             : (meta.previousClose != null) ? meta.previousClose
                             : (meta.chartPreviousClose != null) ? meta.chartPreviousClose
                             : (lastClose != null ? lastClose : null);
-              // 优先用 Yahoo 自带的涨跌额/幅，避免二次计算误差；否则用上一交易日收盘推算
-              const change = (meta.regularMarketChange != null) ? meta.regularMarketChange
-                            : (prevClose != null ? price - prevClose : 0);
-              const changePct = (meta.regularMarketChangePercent != null) ? meta.regularMarketChangePercent
+              // 优先用 Yahoo 自带的涨跌额/幅；历史查询或缺失时，用上一交易日收盘推算
+              const change = (meta.regularMarketChange != null && !useHistoryBase) ? meta.regularMarketChange
+                            : (prevClose != null ? round2(price - prevClose) : 0);
+              const changePct = (meta.regularMarketChangePercent != null && !useHistoryBase) ? meta.regularMarketChangePercent
                             : (prevClose ? (change / prevClose * 100) : 0);
               const t0 = meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000) : null;
               return {
@@ -464,6 +483,7 @@ class ToolRegistry {
                 currency: meta.currency || 'USD',
                 exchange: meta.exchangeName,
                 market_time: t0 ? t0.toISOString() : null,
+                history: history || undefined,
                 source: 'Yahoo Finance',
               };
             } catch (e) {

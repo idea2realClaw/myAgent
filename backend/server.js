@@ -764,6 +764,7 @@ function buildSystemPrompt(provider = 'openai') {
 - 透明性铁律（最高优先级，必须严格遵守）：
   (a) 凡本次回答中调用了任何工具（如 stock_price、web_search、python 等），必须在回答里明确点出「我调用了 <工具名> 工具（数据来源：<来源>）」，并简述取到了什么。
   (b) 凡本次回答全程未调用任何工具、仅依靠模型已有知识/训练经验作答，必须在回答最开头显式声明，例如：「我根据经验认为：…」或「（以下为基于我已有知识的回答，未经实时工具核实）…」。即使只是闲聊或常识性问题也要照此声明，绝不能把未经验证的内容伪装成已通过工具核实的事实。诚实永远优先于语句流畅。
+- 股票历史/区间查询（如"过去五天""近一周""历史走势"）：调用 stock_price 工具时务必传入 range 参数（"5d"=过去5天、"1mo"=过去1月、"3mo"、"1y"），工具会返回 history 数组（每日 开盘/最高/最低/收盘/成交量），据此归纳趋势。绝不要用默认的"当前快照"冒充历史数据。
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
   // Append tool usage instructions (parameterized)
@@ -1555,24 +1556,32 @@ function detectStockPriceQuery(text) {
   const isPriceIntent = /(价格|股价|行情|报价|涨跌|市值|多少|实时|净值|基金)/.test(lower)
     || /\b(price|quote|stock|etf|ticker|nasdaq)\b/.test(lower)
     || cmdMatch != null;
-  if (!isPriceIntent) return null;
-  // 超出"当前快照"能力的问题（历史/区间/分析）→ 交给 Agent 循环理解并分解，不硬抢
-  if (STOCK_LOOP_WORDS.some((w) => lower.includes(w.toLowerCase()))) return null;
   // 1) 中文名映射
+  let symbol = null, raw = null;
   for (const [cn, code] of Object.entries(STOCK_NAME_MAP)) {
-    if (lower.includes(cn.toLowerCase())) return { symbol: code, raw: cn };
+    if (lower.includes(cn.toLowerCase())) { symbol = code; raw = cn; break; }
   }
   // 2) 带市场后缀代码：0700.HK / 600519.SS / TLT.US
-  const m = work.match(/\b(\d{4,6}\.(?:HK|SS|SZ))\b/i) || work.match(/\b([A-Za-z]{1,6}\.(?:HK|US|L|O|PA|N))\b/i);
-  if (m) return { symbol: m[1].toUpperCase(), raw: m[1] };
-  // 3) 纯字母代码（2-5 字母，排除常见非代码词）
-  const codes = work.match(/\b[A-Za-z]{2,5}\b/g) || [];
-  for (const c of codes) {
-    const up = c.toUpperCase();
-    if (STOCK_STOP_WORDS.has(up)) continue;
-    if (/^[A-Z]+$/.test(up)) return { symbol: up, raw: c };
+  if (!symbol) {
+    const m = work.match(/\b(\d{4,6}\.(?:HK|SS|SZ))\b/i) || work.match(/\b([A-Za-z]{1,6}\.(?:HK|US|L|O|PA|N))\b/i);
+    if (m) { symbol = m[1].toUpperCase(); raw = m[1]; }
   }
-  return null;
+  // 3) 纯字母代码（2-5 字母，排除常见非代码词）
+  if (!symbol) {
+    const codes = work.match(/\b[A-Za-z]{2,5}\b/g) || [];
+    for (const c of codes) {
+      const up = c.toUpperCase();
+      if (STOCK_STOP_WORDS.has(up)) continue;
+      if (/^[A-Z]+$/.test(up)) { symbol = up; raw = c; break; }
+    }
+  }
+  if (!symbol) return null;
+  const hasLoop = STOCK_LOOP_WORDS.some((w) => lower.includes(w.toLowerCase()));
+  // 必须含价格意图词或历史/分析词，才视作股票查询（避免把普通英文句里的缩写误判为股票）
+  if (!isPriceIntent && !hasLoop) return null;
+  // 含历史/时间区间/深度分析词 → 标记为 history，交由 Agent 循环理解并分解
+  // （如"过去五天""历史价格""走势"）：循环会调 stock_price(range=...) 取时间序列
+  return { symbol, raw, history: hasLoop };
 }
 
 // 硬路由执行：调真实工具拿数据 → 让模型基于真实数据做自然语言总结（无权编造）
@@ -2119,12 +2128,14 @@ async function handleChat(sessionId, session, msg) {
   const system = buildSystemPrompt(cfg.provider);
 
   // ── 股票价格硬路由：仅处理"当前快照"类查询（如"TLT 股价"）→ 直接调真实工具再总结，杜绝编造 ──
-  // ── 历史/区间/分析类（如"过去五天""走势"）返回 null，交由下方 Agent 循环理解并分解任务 ──
+  // ── 历史/区间/分析类（如"过去五天""走势"）标记 history:true，不硬抢，交 Agent 循环理解并分解 ──
   const priceQuery = detectStockPriceQuery(userMessage);
-  if (priceQuery) {
+  if (priceQuery && !priceQuery.history) {
     await handleStockPriceQuery(ws, session, history, llm, cfg, priceQuery, userMessage);
     return;
   }
+  // 历史/区间类股票查询 → 强制走「带工具」循环，确保循环能调 stock_price(range=...) 取时间序列
+  const forceStockComplex = !!(priceQuery && priceQuery.history);
 
   // ── 统一 Agent 循环（移植自 qaimodelbuilder 共享回合内核） ──
   // 简单问题 → 纯文本循环（无工具）；复杂问题 → 带工具的 agentic 循环
@@ -2137,6 +2148,7 @@ async function handleChat(sessionId, session, msg) {
   } catch (err) {
     console.warn('[handleChat] classify failed, defaulting to complex:', err.message);
   }
+  if (forceStockComplex) isSimple = false; // 股票历史/区间查询必须有工具可用
 
   try {
     if (isSimple) {
