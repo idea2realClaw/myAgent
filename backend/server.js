@@ -707,6 +707,10 @@ app.post('/api/chat/mode-templates/:id/reset', (req, res) => {
 const sessions = new Map(); // sessionId -> { ws, history, config }
 
 function broadcast(ws, data) {
+  // 统计本轮发出的工具调用/结果事件，供"透明性安全网"判断是否真调了工具
+  if (data && (data.type === 'tool_call' || data.type === 'tool_result')) {
+    try { ws.__toolCallsThisTurn = (ws.__toolCallsThisTurn || 0) + 1; } catch { /* ignore */ }
+  }
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(data));
   }
@@ -757,6 +761,9 @@ function buildSystemPrompt(provider = 'openai') {
 - Decompose complex tasks into parallel subtasks when beneficial.
 - Be direct, thorough, and resourceful.
 - 当技能或工具返回结构化数据（JSON、表格、原始 API 输出等）时，必须先用自然语言向用户做总结：先给关键结论，再列出重要数字（如价格、涨跌幅、成交量、更新时间等），绝不要直接把原始 JSON 或原始数据原样粘贴给用户。
+- 透明性铁律（最高优先级，必须严格遵守）：
+  (a) 凡本次回答中调用了任何工具（如 stock_price、web_search、python 等），必须在回答里明确点出「我调用了 <工具名> 工具（数据来源：<来源>）」，并简述取到了什么。
+  (b) 凡本次回答全程未调用任何工具、仅依靠模型已有知识/训练经验作答，必须在回答最开头显式声明，例如：「我根据经验认为：…」或「（以下为基于我已有知识的回答，未经实时工具核实）…」。即使只是闲聊或常识性问题也要照此声明，绝不能把未经验证的内容伪装成已通过工具核实的事实。诚实永远优先于语句流畅。
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
   // Append tool usage instructions (parameterized)
@@ -1582,12 +1589,13 @@ async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMess
   // 透明展示真实原始结果
   broadcast(ws, { type: 'tool_result', success: true, output: JSON.stringify(data, null, 2) });
 
-  // 用 LLM 基于【真实数据】做自然语言总结；prompt 强制"原样使用数字、严禁编造"
+  // 用 LLM 基于【真实数据】做自然语言总结；prompt 强制"原样使用数字、严禁编造、说明数据来源工具"
   const summaryPrompt = [
     '你是行情播报助手。下面是从 Yahoo Finance 获取到的【真实】行情数据（JSON）。',
     '请用简体中文写成一段自然语言总结，必须包含：标的名称与代码、最新价、涨跌额与涨跌幅、',
     '今开/最高/最低（若有）、成交量、货币、交易所、更新时间。',
     '所有数字必须原样使用，严禁修改、严禁编造或补充任何数据里没有的数字。不要把原始 JSON 再贴一遍。',
+    '必须在总结中明确说明：以上数据是通过 stock_price 工具（数据源：Yahoo Finance）实时获取的。',
     '',
     JSON.stringify(data, null, 2),
   ].join('\n');
@@ -1723,6 +1731,15 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
     } else {
       finalText = '[模型未返回有效内容（可能是当前模型触发限流或临时不可用）。请稍后重试或更换模型。]';
     }
+  }
+
+  // 透明性安全网：本轮未调用任何工具时，若答案未声明，则补一句诚实说明
+  // （LLM 不一定每次都自觉声明，这里后端兜底，与系统提示的"透明性铁律"双保险）
+  // 用 ws.__toolCallsThisTurn（broadcast 层统计的本轮 tool_call/tool_result 次数）判断，
+  // 比 executedTools 更可靠——skill 执行（tool:'skill'）等路径不会写入 executedTools。
+  const NO_TOOL_HINTS = ['我根据经验认为', '未经实时工具核实', '未经工具核实', '基于我的知识', '基于已有知识', '以下为我的', '未经核实', '调用了'];
+  if ((ws.__toolCallsThisTurn || 0) === 0 && !NO_TOOL_HINTS.some((h) => finalText.includes(h))) {
+    finalText += '\n\n（我根据经验认为：以上内容基于我的已有知识作答，未经实时工具核实。）';
   }
 
   // 写回历史
@@ -2025,6 +2042,7 @@ function looksLikeInvocation(text) {
 
 async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
+  ws.__toolCallsThisTurn = 0; // 重置本轮工具调用计数（透明性安全网用）
   const userMessage = msg.content;
   const conversationId = msg.conversationId || 'unknown';
 
