@@ -1800,19 +1800,23 @@ function parseJsonLoose(text) {
 }
 
 // ① 任务分解：把问题拆成 1-5 个可独立执行的子任务
-async function planDecompose(llm, question, priorContext, iteration) {
+async function planDecompose(llm, question, priorContext, iteration, researchHint) {
   const sys = [
-    '你是任务规划助手。把用户问题拆解为完成回答所必需的、最少的、可独立执行的子任务清单。',
+    '你是任务规划助手。把用户问题拆解为完成回答所必需的、可独立执行的子任务清单。',
     '每个子任务是一个简短、具体、可执行的步骤（例如「获取 TLT 近5个交易日的每日收盘价」）。',
-    '原子问题可以只返回 1 个子任务；复杂问题最多 5 个。',
+    '原子问题可以只返回 1 个子任务；复杂/研究问题最多 5 个。',
     '只返回 JSON 数组，格式：[{"title":"..."}]。不要输出任何解释文字。',
     '子任务标题使用与用户问题相同的语言。',
-  ].join('\n');
+  ];
+  if (researchHint) {
+    sys.push('⚠️ 该问题需要【最新/外部真实资料】，禁止让模型凭记忆直接作答。请拆成 2–4 个【检索角度不同而互补】的子任务（每个子任务对应一次独立的 web_search 检索，使用不同关键词/维度），例如分别检索「事件概况」「最新进展/赛果」「背景/对比」。不要把「直接回答用户」当作子任务。');
+  }
+  const sysText = sys.join('\n');
   let user = `原始问题：${question}`;
   if (priorContext && iteration > 1) {
     user += `\n\n已有结果（可能不完整）：\n${priorContext.slice(-2500)}\n\n请只列出为补全答案【还缺少】的子任务；若已足够可返回空数组 []。`;
   }
-  const raw = await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.2, maxTokens: 600 });
+  const raw = await llm.chat([{ role: 'system', content: sysText }, { role: 'user', content: user }], { temperature: 0.2, maxTokens: 600 });
   const parsed = parseJsonLoose(raw);
   let arr = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.subtasks) ? parsed.subtasks : null);
   if (!arr) {
@@ -1831,6 +1835,7 @@ async function planSelfCheck(llm, question, context) {
     '你是严格的审查员。给你原始问题与已收集到的结果，判断结果是否【完整回答】了问题。',
     '只返回 JSON：{"satisfied": true 或 false, "missing": ["缺失点1", "..."], "reason": "简短理由"}。',
     '若未完整回答，请在 missing 中列出具体、可执行的缺失项；若已完整，missing 为空数组。',
+    '特别注意：若原始问题需要实时或外部信息（如最新新闻、比赛结果、具体数据、特定事件），但已收集结果中【没有】任何 web_search 等工具的真实检索内容（仅为模型自身陈述），则 satisfied 必须为 false，并在 missing 中明确写"通过 web_search 检索真实资料"。',
   ].join('\n');
   const user = `原始问题：${question}\n\n已收集结果：\n${(context || '').slice(-4000)}`;
   const raw = await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0, maxTokens: 400 });
@@ -1915,6 +1920,7 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
   }
 
   let res = await runOnce([...wireMessages]);
+  console.log(`[SubtaskKernel] 首次执行: 工具=[${res.executedTools.map((t) => t.title).join(', ') || '无'}]${res.error ? ' 错误=' + res.error : ''}`);
 
   // 强制联网重试：子任务需联网但模型退化没调任何工具 → 再跑一次并强制调用 web_search
   const wireText = JSON.stringify(wireMessages);
@@ -1925,14 +1931,24 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
       last.content += '\n\n【强制要求】本子任务必须调用 web_search 工具获取真实数据，严禁凭记忆编造任何事实、比分、日期或数据来源。若 web_search 无结果，请明确说明"未检索到相关信息"。';
     }
     res = await runOnce(forcedWire);
+    console.log(`[SubtaskKernel] 强制联网重试后: 工具=[${res.executedTools.map((t) => t.title).join(', ') || '无'}]`);
   }
 
   return res;
 }
 
+// 判断是否需要外部真实资料的「非常见/研究型」问题（需多次联网检索，不可凭记忆作答）
+const RESEARCH_RE = /最新|新闻|消息|比赛|赛果|比分|今日|今天|昨天|本周|本月|今年|实时|当前|现在|天气|汇率|政策|发布|上市|夺冠|冠军|排名|榜单|趋势|分析|如何|怎么|为什么|对比|比较|研究|报告|数据|事件|谁|哪个|哪支|几比|20\d\d|世界杯|奥运|选举|财报|gdp|news|latest|today|result|score|weather|report|analysis|compare|why|how|who|when/i;
+function isResearchQuestion(q) {
+  return RESEARCH_RE.test(q || '');
+}
+
 // 主编排：规划 → 执行(打勾) → 自检 → 循环 → 汇总+遗留
 async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   const question = history[history.length - 1]?.content || '';
+  const research = isResearchQuestion(question);
+  console.log(`[PlannedLoop] 原始问题: ${question}`);
+  console.log(`[PlannedLoop] 研究型问题(需多次联网检索): ${research}`);
   const MAX_ITER = config.maxPlanIterations || 3;
   const allExecuted = [];
   let context = '';
@@ -1944,11 +1960,12 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
 
     let subtasks = [];
     try {
-      subtasks = await planDecompose(llm, question, context, iter);
+      subtasks = await planDecompose(llm, question, context, iter, research);
     } catch (e) {
       subtasks = iter === 1 ? [{ title: question }] : [];
     }
     if (!subtasks || subtasks.length === 0) break;
+    console.log(`[PlannedLoop] 第${iter}轮分解(${subtasks.length}项): ${subtasks.map((s) => s.title).join(' | ')}`);
 
     const planItems = subtasks.map((s, i) => ({ id: `st_${iter}_${i}`, title: String(s.title).trim() }));
     broadcast(ws, {
@@ -1963,12 +1980,16 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
     for (const item of planItems) {
       if (session.stopRequested) { broadcast(ws, { type: 'subtask_error', taskId: item.id, title: item.title, message: '已停止' }); break; }
       broadcast(ws, { type: 'subtask_start', taskId: item.id, title: item.title });
+      console.log(`[PlannedLoop] 子任务[${item.id}] 开始: ${item.title}`);
       const wire = [
         { role: 'system', content: system },
         ...history.slice(-6),
         {
           role: 'user',
           content: `请完成以下子任务并直接给出结果（可调用工具获取真实数据，禁止编造）：\n【子任务】${item.title}\n\n这是为回答原始问题「${question}」而分解出的一步。` +
+            (research
+              ? '\n\n本子任务需要外部真实资料：请主动调用 web_search 工具检索；若一条结果不足以回答，请用【不同关键词】再检索 1–2 次，综合多来源后再作答，严禁凭记忆编造任何事实、日期、比分或数据来源。'
+              : '') +
             (context ? `\n\n已有上下文（供参考，勿重复）：\n${context.slice(-2000)}` : ''),
         },
       ];
@@ -1976,6 +1997,8 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
       const out = (res.content || '').trim() || '(该子任务未产生有效输出)';
       allExecuted.push({ id: item.id, title: item.title, status: res.error ? 'error' : 'done' });
       context += `\n### ${item.title}\n${out}\n`;
+      const toolsUsed = res.executedTools.map((t) => t.title).join(', ') || '(无)';
+      console.log(`[PlannedLoop] 子任务[${item.id}] 完成: 工具=[${toolsUsed}] 输出长度=${out.length}${res.error ? ' 错误=' + res.error : ''}`);
       if (res.error) broadcast(ws, { type: 'subtask_error', taskId: item.id, title: item.title, message: res.error });
       else broadcast(ws, { type: 'subtask_done', taskId: item.id, title: item.title });
     }
@@ -1987,6 +2010,7 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
     try {
       check = await planSelfCheck(llm, question, context);
     } catch (e) { check = { satisfied: true, missing: [] }; }
+    console.log(`[PlannedLoop] 自检: satisfied=${check.satisfied} missing=${JSON.stringify(check.missing)} reason=${check.reason || ''}`);
     if (check.satisfied) { remaining = []; break; }
     remaining = check.missing || [];
     if (iter === MAX_ITER) break; // 达到最大轮次仍未满足 → 下面汇总时报告遗留
@@ -2000,6 +2024,7 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   } catch (e) { finalText = ''; }
   finalText = identity.filterOutput((finalText || '').trim());
   finalText = enforceToolClaimHonesty(finalText, session.__realToolNames);
+  console.log(`[PlannedLoop] 汇总完成: 答案长度=${finalText.length} 本轮真实工具=${[...session.__realToolNames].join(',') || '(无)'}`);
   if (!finalText) {
     finalText = context.trim() || '抱歉，本轮未能获取有效结果，请重试或更换模型。';
     if (remaining.length) finalText += `\n\n⚠️ 遗留问题：\n- ${remaining.join('\n- ')}`;
@@ -2399,7 +2424,7 @@ async function handleChat(sessionId, session, msg) {
   const conversationId = msg.conversationId || 'unknown';
 
   // Log conversation information
-  console.log(`[Conversation] sessionId=${sessionId}, conversationId=${conversationId}, message="${userMessage.substring(0, 100)}..."`);
+  console.log(`[Chat] 收到用户消息: ${userMessage}`);
 
   // ── Direct tool/command execution (skip LLM) ──────────
   // If user sends JSON with "command" or "tool" field, execute directly
@@ -2483,6 +2508,9 @@ async function handleChat(sessionId, session, msg) {
     console.warn('[handleChat] classify failed, defaulting to complex:', err.message);
   }
   if (forceStockComplex) isSimple = false; // 股票历史/区间查询必须有工具可用
+  // 非常见/研究型问题（需最新或外部真实资料）→ 强制走带工具规划环，禁止纯文本凭记忆作答
+  if (isResearchQuestion(userMessage)) isSimple = false;
+  console.log(`[Chat] 问题分类: ${isSimple ? 'simple(纯文本无工具)' : 'complex(带工具规划环)'}${forceStockComplex ? ' [股票历史/区间]' : ''}${isResearchQuestion(userMessage) ? ' [研究型强制complex]' : ''}`);
 
   try {
     if (isSimple) {
