@@ -1838,7 +1838,7 @@ async function planSelfCheck(llm, question, context) {
     '若未完整回答，请在 missing 中列出具体、可执行的缺失项；若已完整，missing 为空数组。',
     '特别注意：若原始问题需要实时或外部信息（如最新新闻、比赛结果、具体数据、特定事件），但已收集结果中【没有】任何 web_search 等工具的真实检索内容（仅为模型自身陈述），则 satisfied 必须为 false，并在 missing 中明确写"通过 web_search 检索真实资料"。',
   ].join('\n');
-  const user = `原始问题：${question}\n\n已收集结果：\n${(context || '').slice(-4000)}`;
+  const user = `原始问题：${question}\n\n已收集结果：\n${(context || '').slice(-8000)}`;
   const raw = await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0, maxTokens: 400 });
   const parsed = parseJsonLoose(raw);
   if (!parsed || typeof parsed.satisfied !== 'boolean') return { satisfied: true, missing: [], reason: '' };
@@ -1848,16 +1848,19 @@ async function planSelfCheck(llm, question, context) {
 // ⑤ 汇总：基于真实结果写最终答案；仍未解决的列为「遗留问题」
 async function planSynthesize(llm, question, context, remaining) {
   const sys = [
-    '你是总结助手。请【仅依据】已收集的结果，用简体中文写出对原始问题的最终回答。',
-    '严禁编造数据；所有数字/事实必须来自已收集结果。',
-    '若有未能解决的部分，请在结尾单列一节「⚠️ 遗留问题」，逐条说明还有哪些没能解决、原因、以及建议的下一步。',
-    '若已完整解决则无需该节。回答要条理清晰、直接。',
+    '你是总结助手。你的唯一任务是【直接回答用户的原始问题】，答案必须紧扣问题本身，不要跑题、不要只讲背景。',
+    '你【必须以下方“已收集的检索资料”为事实依据】来组织答案：从其中标注为「web_search 等工具检索到的真实资料」的内容里，提取与问题直接相关的具体信息（数字、日期、名称、赛果、结论等）并据此作答。',
+    '严禁忽略检索资料而凭自身记忆泛泛作答；只要检索资料里有与问题相关的内容，就必须在答案中体现并使用它。',
+    '严禁编造：所有关键事实/数字必须来自检索资料；若资料之间冲突，指出冲突并采信更可靠/更新的来源。',
+    '结构：先用 1–2 句直接给出对问题的核心回答，再分点展开关键信息。',
+    '若检索资料确实不足以回答问题的某一部分，请在结尾单列一节「⚠️ 遗留问题」，逐条说明缺口、原因与建议的下一步；能回答的部分仍要正常回答。若已完整解决则无需该节。',
+    '使用简体中文，条理清晰、直接。',
   ].join('\n');
-  let user = `原始问题：${question}\n\n已收集结果：\n${(context || '').slice(-6000)}`;
+  let user = `用户的原始问题（你的回答必须针对它，逐点回应）：\n${question}\n\n=== 已收集的检索资料与中间结果（请据此作答，勿脱离）===\n${(context || '').slice(-16000)}`;
   if (remaining && remaining.length) {
     user += `\n\n经自检仍未解决的缺口：\n- ${remaining.join('\n- ')}`;
   }
-  return await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.4 });
+  return await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.3 });
 }
 
 // 执行单个子任务：agentKernel 带工具跑一趟，转发 tool_call/tool_result（不发 chunk/done），返回文本
@@ -1916,8 +1919,9 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
     } catch (err) {
       return { content: '', executedTools, error: err.message };
     }
-    const text = identity.filterOutput((wireToFinalText(wire) + '\n' + toolResultsText.filter(Boolean).join('\n')).trim());
-    return { content: text, executedTools };
+    const modelText = identity.filterOutput((wireToFinalText(wire) || '').trim());
+    const evidence = toolResultsText.filter(Boolean).join('\n\n').trim();
+    return { content: modelText, evidence, executedTools };
   }
 
   let res = await runOnce([...wireMessages]);
@@ -1995,11 +1999,17 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
         },
       ];
       const res = await runSubtaskKernel({ ws, session, llm, wireMessages: wire, config });
-      const out = (res.content || '').trim() || '(该子任务未产生有效输出)';
+      const modelOut = (res.content || '').trim();
+      const evidence = (res.evidence || '').trim();
       allExecuted.push({ id: item.id, title: item.title, status: res.error ? 'error' : 'done' });
-      context += `\n### ${item.title}\n${out}\n`;
+      // 证据(工具真实检索结果)前置并保留充足篇幅，供汇总据此作答；模型小结随后。
+      let block = `\n### 子任务：${item.title}\n`;
+      if (evidence) block += `【web_search 等工具检索到的真实资料】\n${evidence.slice(0, 4000)}\n`;
+      if (modelOut && modelOut !== '[tool_calls]') block += `【本步小结】\n${modelOut}\n`;
+      if (!evidence && (!modelOut || modelOut === '[tool_calls]')) block += '(该子任务未产生有效输出)\n';
+      context += block;
       const toolsUsed = res.executedTools.map((t) => t.title).join(', ') || '(无)';
-      console.log(`[PlannedLoop] 子任务[${item.id}] 完成: 工具=[${toolsUsed}] 输出长度=${out.length}${res.error ? ' 错误=' + res.error : ''}`);
+      console.log(`[PlannedLoop] 子任务[${item.id}] 完成: 工具=[${toolsUsed}] 证据长度=${evidence.length} 小结长度=${modelOut.length}${res.error ? ' 错误=' + res.error : ''}`);
       if (res.error) broadcast(ws, { type: 'subtask_error', taskId: item.id, title: item.title, message: res.error });
       else broadcast(ws, { type: 'subtask_done', taskId: item.id, title: item.title });
     }
