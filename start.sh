@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-# Agent WebUI — Start Script (Cross-platform: Windows / macOS / Linux)
+# Agent WebUI â Start Script (Cross-platform: Windows / macOS / Linux)
 # ============================================================
 
-# ── OS Detection ─────────────────────────────────────────────
+# ââ OS Detection âââââââââââââââââââââââââââââââââââââââââââââ
 __OS_TYPE="$(uname -s 2>/dev/null || echo 'Unknown')"
 case "$__OS_TYPE" in
   Darwin*) __OS="mac" ;;
@@ -13,7 +13,7 @@ case "$__OS_TYPE" in
 esac
 export __OS
 
-# ── Node.js Discovery ───────────────────────────────────────
+# ââ Node.js Discovery âââââââââââââââââââââââââââââââââââââââ
 # Try to find node in common locations for current OS
 if [ "$__OS" = "mac" ] || [ "$__OS" = "linux" ]; then
   for __node_dir in \
@@ -46,11 +46,11 @@ else
 fi
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "❌ Node.js is required. Install from https://nodejs.org"
+  echo "â Node.js is required. Install from https://nodejs.org"
   exit 1
 fi
 
-# ── Path helper ─────────────────────────────────────────────
+# ââ Path helper âââââââââââââââââââââââââââââââââââââââââââââ
 # Cross-platform SCRIPT_DIR: always get a usable absolute path
 if [ "$__OS" = "windows" ]; then
   # Convert Unix-style path (Git Bash) to Windows-style for Node.js
@@ -69,24 +69,24 @@ else
 fi
 CONTROL_PORT=13737
 
-# ── Proxy avoidance ─────────────────────────────────────────
+# ââ Proxy avoidance âââââââââââââââââââââââââââââââââââââââââ
 export no_proxy="${no_proxy:+$no_proxy,}localhost,127.0.0.1"
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}localhost,127.0.0.1"
 
 set -e
-echo "✅ Node.js found: $(command -v node)"
-echo "✅ OS detected: $__OS"
+echo "â Node.js found: $(command -v node)"
+echo "â OS detected: $__OS"
 echo ""
 
-# ── Python Virtual Environment Setup ─────────────────────────
+# ââ Python Virtual Environment Setup âââââââââââââââââââââââââ
 if [ "$__OS" = "mac" ] || [ "$__OS" = "linux" ]; then
   VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
   if [ -f "$VENV_PYTHON" ]; then
     PY_VER="$("$VENV_PYTHON" --version 2>&1)"
-    echo "✅ Python venv: $PY_VER"
+    echo "â Python venv: $PY_VER"
     export PATH="$SCRIPT_DIR/venv/bin:$PATH"
   else
-    echo "ℹ️   No Python venv found. Run ./setup-mac.sh to create one."
+    echo "â¹ï¸   No Python venv found. Run ./setup-mac.sh to create one."
   fi
 elif [ "$__OS" = "windows" ]; then
   # ARM64 Windows: use bundled python-arm64
@@ -95,7 +95,7 @@ elif [ "$__OS" = "windows" ]; then
     "$SCRIPT_DIR/venv/Scripts"; do
     if [ -f "$py_dir/python.exe" ]; then
       PY_VER="$("$py_dir/python.exe" --version 2>&1)"
-      echo "✅ Python: $PY_VER ($py_dir)"
+      echo "â Python: $PY_VER ($py_dir)"
       export PATH="$py_dir:$PATH"
       break
     fi
@@ -103,19 +103,19 @@ elif [ "$__OS" = "windows" ]; then
 fi
 echo ""
 
-echo "╔═════════════════════════════════════════════╗"
-echo "║          Agent WebUI Launcher                 ║"
-echo "╚═════════════════════════════════════════════╝"
+echo "âââââââââââââââââââââââââââââââââââââââââââââââ"
+echo "â          Agent WebUI Launcher                 â"
+echo "âââââââââââââââââââââââââââââââââââââââââââââââ"
 echo ""
 
-# ── Install deps if needed ────────────────────────────────
+# ââ Install deps if needed ââââââââââââââââââââââââââââââââ
 if [ ! -d "$BACKEND_DIR/node_modules" ]; then
-  echo "📦 Installing dependencies..."
+  echo "ð¦ Installing dependencies..."
   cd "$BACKEND_DIR" && npm install
   cd "$SCRIPT_DIR"
 fi
 
-# ── Cross-platform process check ───────────────────────────
+# ââ Cross-platform process check âââââââââââââââââââââââââââ
 check_process() {
   local pid="$1"
   if [ -z "$pid" ] || ! [ "$pid" -gt 0 ] 2>/dev/null; then
@@ -130,7 +130,7 @@ check_process() {
   fi
 }
 
-# ── Cross-platform kill ────────────────────────────────────
+# ââ Cross-platform kill ââââââââââââââââââââââââââââââââââââ
 kill_process() {
   local pid="$1"
   if ! check_process "$pid"; then
@@ -148,12 +148,12 @@ kill_process() {
   # Wait briefly and confirm
   sleep 1
   if check_process "$pid"; then
-    echo "   ⚠️  Process $pid may still be running"
+    echo "   â ï¸  Process $pid may still be running"
   fi
   return 0
 }
 
-# ── Check if daemon is running ────────────────────────────
+# ââ Check if daemon is running ââââââââââââââââââââââââââââ
 check_daemon() {
   if [ -f "$SCRIPT_DIR/.agent-webui-daemon.pid" ]; then
     local pid
@@ -165,38 +165,38 @@ check_daemon() {
   return 1
 }
 
-# ── Stop daemon ────────────────────────────────────────────
+# ââ Stop daemon ââââââââââââââââââââââââââââââââââââââââââââ
 stop_daemon() {
   if check_daemon; then
     local pid
     pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")"
-    echo "🛑  Stopping daemon (PID: $pid)..."
+    echo "ð  Stopping daemon (PID: $pid)..."
     kill_process "$pid"
     rm -f "$SCRIPT_DIR/.agent-webui-daemon.pid"
-    echo "✅ Daemon stopped"
+    echo "â Daemon stopped"
   else
-    echo "ℹ️   Daemon is not running"
+    echo "â¹ï¸   Daemon is not running"
   fi
 }
 
-# ── Restart daemon ─────────────────────────────────────────
+# ââ Restart daemon âââââââââââââââââââââââââââââââââââââââââ
 restart_daemon() {
   if check_daemon; then
-    echo "🔄 Restarting daemon..."
+    echo "ð Restarting daemon..."
     local pid
     pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")"
     kill -USR1 "$pid" 2>/dev/null || true
-    echo "✅ Restart signal sent"
+    echo "â Restart signal sent"
   else
-    echo "⚠️  Daemon is not running, starting..."
+    echo "â ï¸  Daemon is not running, starting..."
     start_daemon
   fi
 }
 
-# ── Start daemon ───────────────────────────────────────────
+# ââ Start daemon âââââââââââââââââââââââââââââââââââââââââââ
 start_daemon() {
   if check_daemon; then
-    echo "⚠️  Daemon is already running"
+    echo "â ï¸  Daemon is already running"
     local pid
     pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")"
     echo "   PID: $pid"
@@ -208,7 +208,7 @@ start_daemon() {
   mkdir -p "$SCRIPT_DIR/logs"
   mkdir -p "$SCRIPT_DIR/backend/logs"
 
-  echo "🚀 Starting Agent WebUI Daemon..."
+  echo "ð Starting Agent WebUI Daemon..."
   echo "   Identity files: $SCRIPT_DIR/identity/"
   echo "   Skills: Add to .claude/skills/ or ~/.claude/skills/"
   echo "   Logs: $SCRIPT_DIR/logs/"
@@ -232,7 +232,7 @@ start_daemon() {
       local pid
       pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid" 2>/dev/null || echo '')"
       if check_process "$pid"; then
-        echo "✅ Daemon started (PID: $pid)"
+        echo "â Daemon started (PID: $pid)"
         echo "   URL: http://localhost:3737"
         echo "   Control: http://localhost:$CONTROL_PORT"
         echo ""
@@ -246,23 +246,23 @@ start_daemon() {
   done
 
   # If we get here, failed to start - show log tail
-  echo "❌ Daemon may have failed — last 20 lines of log:"
+  echo "â Daemon may have failed â last 20 lines of log:"
   tail -20 "$SCRIPT_DIR/logs/daemon-stdout.log" 2>/dev/null || true
   echo ""
   echo "   Full log: $SCRIPT_DIR/logs/daemon-stdout.log"
   exit 1
 }
 
-# ── Show status ────────────────────────────────────────────
+# ââ Show status ââââââââââââââââââââââââââââââââââââââââââââ
 show_status() {
   if check_daemon; then
     local pid
     pid="$(cat "$SCRIPT_DIR/.agent-webui-daemon.pid")"
-    echo "✅ Daemon is running (PID: $pid)"
+    echo "â Daemon is running (PID: $pid)"
 
     if command -v curl >/dev/null 2>&1; then
       echo ""
-      echo "📊 Status:"
+      echo "ð Status:"
       curl -s "http://127.0.0.1:$CONTROL_PORT/status" 2>/dev/null | \
         node -e "
           const chunks = [];
@@ -280,41 +280,41 @@ show_status() {
         " 2>/dev/null || true
     fi
   else
-    echo "❌ Daemon is not running"
+    echo "â Daemon is not running"
   fi
 }
 
-# ── View recent logs ───────────────────────────────────────
+# ââ View recent logs âââââââââââââââââââââââââââââââââââââââ
 view_logs() {
   local log_file="$SCRIPT_DIR/logs/agent-webui-daemon.log"
   if [ -f "$log_file" ]; then
-    echo "📋 Recent logs (last 50 lines):"
+    echo "ð Recent logs (last 50 lines):"
     echo "   Log file: $log_file"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ"
     tail -50 "$log_file"
   else
-    echo "ℹ️   No log file found at $log_file"
+    echo "â¹ï¸   No log file found at $log_file"
     echo "   Start the daemon first: $0 start"
   fi
 }
 
-# ── Follow logs ────────────────────────────────────────────
+# ââ Follow logs ââââââââââââââââââââââââââââââââââââââââââââ
 follow_logs() {
   local log_file="$SCRIPT_DIR/logs/agent-webui-daemon.log"
   if [ -f "$log_file" ]; then
-    echo "📋 Following logs (Ctrl+C to stop)..."
+    echo "ð Following logs (Ctrl+C to stop)..."
     echo "   Log file: $log_file"
     echo ""
     tail -f "$log_file"
   else
-    echo "ℹ️   No log file found at $log_file"
+    echo "â¹ï¸   No log file found at $log_file"
     echo "   Start the daemon first: $0 start"
   fi
 }
 
-# ── Run in foreground (development mode) ─────────────────
+# ââ Run in foreground (development mode) âââââââââââââââââ
 run_foreground() {
-  echo "🚀 Starting MyAgent in development mode..."
+  echo "ð Starting MyAgent in development mode..."
   echo "   Server logs will be displayed in this terminal"
   echo "   Press Ctrl+C to stop the server"
   echo ""
@@ -322,27 +322,27 @@ run_foreground() {
   mkdir -p "$SCRIPT_DIR/logs"
 
   if check_daemon; then
-    echo "⚠️  Daemon is running. Stopping it first..."
+    echo "â ï¸  Daemon is running. Stopping it first..."
     stop_daemon
     sleep 2
   fi
 
-  echo "📋 Starting server in foreground..."
+  echo "ð Starting server in foreground..."
   echo "   Log file: $SCRIPT_DIR/logs/agent-webui-server.log"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ"
   echo ""
 
   node "$SCRIPT_DIR/backend/server.js" 2>&1 | tee -a "$SCRIPT_DIR/logs/agent-webui-server.log"
 }
 
-# ── Parse command line arguments ────────────────────────────
+# ââ Parse command line arguments ââââââââââââââââââââââââââââ
 case "${1:-start}" in
   start)
     start_daemon
     sleep 1
     show_status
     echo ""
-    echo "📋 To view logs: $0 logs"
+    echo "ð To view logs: $0 logs"
     echo "   Or: tail -f $SCRIPT_DIR/logs/agent-webui-daemon.log"
     ;;
   stop)

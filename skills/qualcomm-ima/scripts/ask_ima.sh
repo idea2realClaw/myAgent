@@ -1,97 +1,97 @@
 #!/bin/bash
-# Qualcomm IMA 问答工具
-# 使用Playwright CLI在腾讯ima的高通开源资料库中提问
-# 首次使用需要微信扫码登录，之后自动保存登录状态
+# Qualcomm IMA é®ç­å·¥å·
+# ä½¿ç¨Playwright CLIå¨è¾è®¯imaçé«éå¼æºèµæåºä¸­æé®
+# é¦æ¬¡ä½¿ç¨éè¦å¾®ä¿¡æ«ç ç»å½ï¼ä¹åèªå¨ä¿å­ç»å½ç¶æ
 
 set -e
 
-# 配置
+# éç½®
 SKILL_DIR="$HOME/.workbuddy/skills/qualcomm-ima"
 PROFILE_DIR="$HOME/.workbuddy/playwright-ima-profile"
 KB_ID="7437325709611728"
 SHARE_ID="9825daa962f2fb8ee4f387da61d8bb1218356f39f477153e3f37b8131d740354"
 BASE_URL="https://ima.qq.com/wikis?webFrom=10000050&channel=10000050&shareId=${SHARE_ID}&knowledgeBaseId=${KB_ID}&needAutoLogin=0"
 
-# 颜色输出
+# é¢è²è¾åº
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
 usage() {
-    echo "Qualcomm IMA 高通开源资料库问答工具"
+    echo "Qualcomm IMA é«éå¼æºèµæåºé®ç­å·¥å·"
     echo ""
-    echo "用法: $0 <问题>          提问"
-    echo "   $0 --setup           初始化浏览器（首次使用）"
-    echo "   $0 --snapshot        查看当前页面快照"
-    echo "   $0 --screenshot      截图"
-    echo "   --help               显示帮助"
+    echo "ç¨æ³: $0 <é®é¢>          æé®"
+    echo "   $0 --setup           åå§åæµè§å¨ï¼é¦æ¬¡ä½¿ç¨ï¼"
+    echo "   $0 --snapshot        æ¥çå½åé¡µé¢å¿«ç§"
+    echo "   $0 --screenshot      æªå¾"
+    echo "   --help               æ¾ç¤ºå¸®å©"
     echo ""
-    echo "示例:"
+    echo "ç¤ºä¾:"
     echo "  $0 \"QCS6490 NPU Spec\""
-    echo "  $0 \"怎么使用Radxa D6a\""
-    echo "  $0 \"Snapdragon X Elite性能\""
+    echo "  $0 \"æä¹ä½¿ç¨Radxa D6a\""
+    echo "  $0 \"Snapdragon X Eliteæ§è½\""
 }
 
-# 检查playwright-cli是否安装
+# æ£æ¥playwright-cliæ¯å¦å®è£
 check_playwright() {
     if ! command -v playwright-cli &> /dev/null; then
-        echo -e "${RED}错误: playwright-cli 未安装${NC}"
-        echo "请先安装: npm install -g playwright-cli"
+        echo -e "${RED}éè¯¯: playwright-cli æªå®è£${NC}"
+        echo "è¯·åå®è£: npm install -g playwright-cli"
         exit 1
     fi
 }
 
-# 设置浏览器
+# è®¾ç½®æµè§å¨
 setup_browser() {
-    echo -e "${GREEN}正在初始化浏览器配置...${NC}"
+    echo -e "${GREEN}æ­£å¨åå§åæµè§å¨éç½®...${NC}"
 
-    # 设置持久化profile
+    # è®¾ç½®æä¹åprofile
     export PLAYWRIGHT_CHROMIUM_USER_DATA_DIR="$PROFILE_DIR"
 
-    # 打开浏览器
+    # æå¼æµè§å¨
     playwright-cli goto "$BASE_URL"
-    echo -e "${YELLOW}请用微信扫码登录！${NC}"
-    echo "登录后浏览器状态会自动保存"
+    echo -e "${YELLOW}è¯·ç¨å¾®ä¿¡æ«ç ç»å½ï¼${NC}"
+    echo "ç»å½åæµè§å¨ç¶æä¼èªå¨ä¿å­"
     echo ""
-    echo "以后使用无需再次登录"
+    echo "ä»¥åä½¿ç¨æ éåæ¬¡ç»å½"
 }
 
-# 提问
+# æé®
 ask_question() {
     local question="$1"
 
     if [ -z "$question" ]; then
-        echo -e "${RED}错误: 请输入问题${NC}"
+        echo -e "${RED}éè¯¯: è¯·è¾å¥é®é¢${NC}"
         usage
         exit 1
     fi
 
-    # URL编码问题
+    # URLç¼ç é®é¢
     encoded_question=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$question'))")
 
-    # 构建带问题的URL
+    # æå»ºå¸¦é®é¢çURL
     question_url="${BASE_URL}&question=${encoded_question}"
 
-    echo -e "${GREEN}正在加载问题: $question${NC}"
+    echo -e "${GREEN}æ­£å¨å è½½é®é¢: $question${NC}"
 
-    # 设置持久化profile
+    # è®¾ç½®æä¹åprofile
     export PLAYWRIGHT_CHROMIUM_USER_DATA_DIR="$PROFILE_DIR"
 
-    # 访问页面
+    # è®¿é®é¡µé¢
     playwright-cli goto "$question_url"
 
-    # 等待加载
-    echo "等待回答生成（约5秒）..."
+    # ç­å¾å è½½
+    echo "ç­å¾åç­çæï¼çº¦5ç§ï¼..."
     sleep 5
 
-    # 获取快照
+    # è·åå¿«ç§
     echo ""
-    echo "========== 回答内容 =========="
+    echo "========== åç­åå®¹ =========="
     playwright-cli snapshot
 }
 
-# 主程序
+# ä¸»ç¨åº
 case "${1:-}" in
     --help|-h)
         usage
