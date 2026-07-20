@@ -1688,20 +1688,9 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
   const runPass = async (withTools, buffer) => {
     const toolSchemas = withTools ? getAllOpenAIToolSchemas() : [];
     const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
-    const openRoundStream = async function* (_roundNo, sendWire) {
-      let frames = [];
-      try {
-        for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
-          if (chunk.type === 'text') frames.push({ type: 'chunk', text: chunk.content });
-          else if (chunk.type === 'tool_call') frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments });
-        }
-        frames.push({ type: 'end', payload: {} });
-      } catch (e) {
-        frames.push({ type: 'error', message: e.message });
-      }
-      for (const f of frames) yield f;
-    };
+    const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas);
     const buffered = [];
+    const toolResultsText = [];
     try {
       for await (const kev of agentKernel.run({
         wireMessages: wire,
@@ -1712,6 +1701,7 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
         abortCheck: () => session.stopRequested === true,
         modelHint: llmConfig.model,
       })) {
+        if (kev.kind === 'tool_result') toolResultsText.push(kev.resultText);
         const mapped = adaptKernelEventToWs(kev, { ws: buffer ? null : ws, executedTools });
         if (!mapped) continue;
         if (mapped.__record) { executedTools.push(mapped.__record); continue; }
@@ -1723,7 +1713,9 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
       return { content: '', error: err.message };
     }
     const text = identity.filterOutput(wireToFinalText(wire));
-    return { content: text, buffered };
+    const tr = toolResultsText.filter(Boolean).join('\n');
+    // 若模型未写总结只调了工具（如退化成 JSON 文本调用），用工具真实结果兜底，避免空白答案
+    return { content: text && text.trim() ? text : tr, buffered };
   };
 
   // 3) 先按分类跑一趟；simple 路径先缓冲（不刷给前端）
@@ -1875,20 +1867,9 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
     });
   const toolSchemas = getAllOpenAIToolSchemas();
   const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
-  const openRoundStream = async function* (_roundNo, sendWire) {
-    let frames = [];
-    try {
-      for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
-        if (chunk.type === 'text') frames.push({ type: 'chunk', text: chunk.content });
-        else if (chunk.type === 'tool_call') frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments });
-      }
-      frames.push({ type: 'end', payload: {} });
-    } catch (e) {
-      frames.push({ type: 'error', message: e.message });
-    }
-    for (const f of frames) yield f;
-  };
+  const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas);
   const executedTools = [];
+  const toolResultsText = [];
   try {
     for await (const kev of agentKernel.run({
       wireMessages: wire,
@@ -1909,6 +1890,7 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
         }
       } else if (kev.kind === 'tool_result') {
         broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText });
+        toolResultsText.push(kev.resultText || '');
       } else if (kev.kind === 'error') {
         return { content: '', executedTools, error: kev.message };
       }
@@ -1916,7 +1898,7 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
   } catch (err) {
     return { content: '', executedTools, error: err.message };
   }
-  const text = identity.filterOutput(wireToFinalText(wire));
+  const text = identity.filterOutput((wireToFinalText(wire) + '\n' + toolResultsText.filter(Boolean).join('\n')).trim());
   return { content: text, executedTools };
 }
 
@@ -2285,6 +2267,56 @@ function looksLikeInvocation(text) {
     /\{\s*"command"\s*:/i.test(text) ||
     /\{\s*"name"\s*:\s*"(web_fetch|web_search|shell_execute|python_execute|http_request|file_read|file_write|file_edit|file_list|file_glob|file_grep|agent|skill)"/i.test(text)
   );
+}
+
+// 从模型吐出的文本中解析「工具调用 JSON」。
+// 支持格式：{"tool":"x","arguments":{...}} / {"name":"x"} / {"invocation":"x"} / {"function":{"name":"x"}}，
+// 容许 ```json 围栏与前后杂字。仅当 JSON 占文本主体且工具名为已知工具时才返回，
+// 避免把“举例说明”类文本误判为工具调用。
+function parseInvocation(text) {
+  if (!text || typeof text !== 'string') return null;
+  let s = text.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) s = fence[1].trim();
+  const m = s.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  if (m[0].length < s.length * 0.6) return null; // JSON 须占文本主体
+  let obj;
+  try { obj = JSON.parse(m[0]); } catch { return null; }
+  const name = obj.tool || obj.name || obj.invocation || (obj.function && obj.function.name);
+  if (!name || typeof name !== 'string') return null;
+  const known = new Set([...toolRegistry.getAllTools().map((t) => t.name), 'agent', 'skill']);
+  if (!known.has(name)) return null;
+  let args = obj.arguments ?? obj.args ?? obj.parameters ?? {};
+  if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+  return { name, args };
+}
+
+// 把 LLM 原始流包装为 SingleAgentTurnKernel 所需的 Frame 流（text / tool_call / end / error）。
+// 关键兜底：当模型未返回结构化 tool_call、却把工具调用以 JSON 文本吐出时
+// （如 Nemotron 3 在 web_search 上偶发退化成 {"tool":"web_search","arguments":{...}}），
+// 解析并合成 tool_call 帧，使内核真正执行该工具，而不是把 JSON 当成最终答案、工具静默不执行。
+function makeOpenRoundStream(llm, supportsTools, toolSchemas) {
+  return async function* (_roundNo, sendWire) {
+    let frames = [];
+    let textBuf = '';
+    let sawToolCall = false;
+    try {
+      for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
+        if (chunk.type === 'text') { textBuf += chunk.content || ''; frames.push({ type: 'chunk', text: chunk.content }); }
+        else if (chunk.type === 'tool_call') { sawToolCall = true; frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments }); }
+      }
+      // 退化兜底：本应走工具却只吐了 JSON 文本
+      if (!sawToolCall && looksLikeInvocation(textBuf)) {
+        const inv = parseInvocation(textBuf);
+        if (inv) frames = [{ type: 'tool_call', id: `call_${_roundNo}_0`, name: inv.name, arguments: inv.args }];
+      }
+      frames.push({ type: 'end', payload: {} });
+    } catch (e) {
+      frames.push({ type: 'error', message: e.message });
+    }
+    for (const f of frames) yield f;
+  };
 }
 
 // ============================================================
