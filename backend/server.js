@@ -1576,7 +1576,9 @@ function detectStockPriceQuery(text) {
     }
   }
   if (!symbol) return null;
-  const hasLoop = STOCK_LOOP_WORDS.some((w) => lower.includes(w.toLowerCase()));
+  // 数字/中文数字 + 时间单位（如"5日""近五个交易日""3个月""two weeks"）→ 视作历史/区间查询
+  const numTimePattern = /(\d+|[一二三四五六七八九十两半]+)\s*(个)?\s*(天|日|周|星期|月|季度|年|交易日|days?|weeks?|months?|years?|trading\s*days?)/i;
+  const hasLoop = STOCK_LOOP_WORDS.some((w) => lower.includes(w.toLowerCase())) || numTimePattern.test(lower);
   // 必须含价格意图词或历史/分析词，才视作股票查询（避免把普通英文句里的缩写误判为股票）
   if (!isPriceIntent && !hasLoop) return null;
   // 含历史/时间区间/深度分析词 → 标记为 history，交由 Agent 循环理解并分解
@@ -1769,6 +1771,237 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
     subtasks: executedTools.map((t) => ({ id: t.id, title: t.title, status: t.status })),
   });
 
+  return { content: finalText };
+}
+
+// ============================================================
+// Planned Loop —— 规划分解 → 逐项执行(打勾) → 自检 → 不满足则再分解循环 → 报告遗留
+// 用户要求：面对复杂问题不要一上来就调工具，而是：
+//   ① 先输出任务分解（plan 卡片，逐项 pending）
+//   ② 逐个执行子任务（agentKernel 带工具），完成一个划掉一个（subtask_done 打勾）
+//   ③ 汇总后自检：结果是否真正回答了原问题
+//   ④ 若未满足 → 针对缺口再分解、再执行（循环，最多 N 轮）
+//   ⑤ 最终总结；仍无法解决的部分显式列为「遗留问题」
+// ============================================================
+
+// 宽松解析 LLM 返回的 JSON（容忍 ```json 围栏、前后杂字）
+function parseJsonLoose(text) {
+  if (!text || typeof text !== 'string') return null;
+  let s = text.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) s = fence[1].trim();
+  // 直接尝试
+  try { return JSON.parse(s); } catch { /* fallthrough */ }
+  // 提取第一个 { ... } 或 [ ... ]
+  const objMatch = s.match(/[[{][\s\S]*[\]}]/);
+  if (objMatch) {
+    try { return JSON.parse(objMatch[0]); } catch { /* ignore */ }
+  }
+  return null;
+}
+
+// ① 任务分解：把问题拆成 1-5 个可独立执行的子任务
+async function planDecompose(llm, question, priorContext, iteration) {
+  const sys = [
+    '你是任务规划助手。把用户问题拆解为完成回答所必需的、最少的、可独立执行的子任务清单。',
+    '每个子任务是一个简短、具体、可执行的步骤（例如「获取 TLT 近5个交易日的每日收盘价」）。',
+    '原子问题可以只返回 1 个子任务；复杂问题最多 5 个。',
+    '只返回 JSON 数组，格式：[{"title":"..."}]。不要输出任何解释文字。',
+    '子任务标题使用与用户问题相同的语言。',
+  ].join('\n');
+  let user = `原始问题：${question}`;
+  if (priorContext && iteration > 1) {
+    user += `\n\n已有结果（可能不完整）：\n${priorContext.slice(-2500)}\n\n请只列出为补全答案【还缺少】的子任务；若已足够可返回空数组 []。`;
+  }
+  const raw = await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.2, maxTokens: 600 });
+  const parsed = parseJsonLoose(raw);
+  let arr = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.subtasks) ? parsed.subtasks : null);
+  if (!arr) {
+    // 兜底：无法解析则把整个问题当作单一子任务
+    return iteration === 1 ? [{ title: question }] : [];
+  }
+  return arr
+    .map((x) => (typeof x === 'string' ? { title: x } : { title: x && (x.title || x.task || x.name) }))
+    .filter((x) => x.title && String(x.title).trim())
+    .slice(0, 5);
+}
+
+// ③ 自检：结果是否真正回答了原问题
+async function planSelfCheck(llm, question, context) {
+  const sys = [
+    '你是严格的审查员。给你原始问题与已收集到的结果，判断结果是否【完整回答】了问题。',
+    '只返回 JSON：{"satisfied": true 或 false, "missing": ["缺失点1", "..."], "reason": "简短理由"}。',
+    '若未完整回答，请在 missing 中列出具体、可执行的缺失项；若已完整，missing 为空数组。',
+  ].join('\n');
+  const user = `原始问题：${question}\n\n已收集结果：\n${(context || '').slice(-4000)}`;
+  const raw = await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0, maxTokens: 400 });
+  const parsed = parseJsonLoose(raw);
+  if (!parsed || typeof parsed.satisfied !== 'boolean') return { satisfied: true, missing: [], reason: '' };
+  return { satisfied: parsed.satisfied, missing: Array.isArray(parsed.missing) ? parsed.missing : [], reason: parsed.reason || '' };
+}
+
+// ⑤ 汇总：基于真实结果写最终答案；仍未解决的列为「遗留问题」
+async function planSynthesize(llm, question, context, remaining) {
+  const sys = [
+    '你是总结助手。请【仅依据】已收集的结果，用简体中文写出对原始问题的最终回答。',
+    '严禁编造数据；所有数字/事实必须来自已收集结果。',
+    '若有未能解决的部分，请在结尾单列一节「⚠️ 遗留问题」，逐条说明还有哪些没能解决、原因、以及建议的下一步。',
+    '若已完整解决则无需该节。回答要条理清晰、直接。',
+  ].join('\n');
+  let user = `原始问题：${question}\n\n已收集结果：\n${(context || '').slice(-6000)}`;
+  if (remaining && remaining.length) {
+    user += `\n\n经自检仍未解决的缺口：\n- ${remaining.join('\n- ')}`;
+  }
+  return await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.4 });
+}
+
+// 执行单个子任务：agentKernel 带工具跑一趟，转发 tool_call/tool_result（不发 chunk/done），返回文本
+async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
+  const llmConfig = {
+    provider: config.provider || 'openrouter',
+    apiKey: config.apiKey,
+    model: config.model,
+    baseURL: config.provider === 'openrouter' ? (config.baseURL || 'https://openrouter.ai/api/v1') : (config.baseURL || undefined),
+  };
+  subAgentManager.llmConfig = llmConfig;
+  const wire = [...wireMessages];
+  const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
+  const buildToolMetas = (rawToolCalls, roundNo) =>
+    rawToolCalls.map((tc, i) => {
+      const name = tc.name || (tc.function && tc.function.name) || 'unknown';
+      const args = tc.arguments || (tc.function && tc.function.arguments) || {};
+      const callId = tc.id || `call_${roundNo}_${i}`;
+      return [name, typeof args === 'string' ? safeParseArgs(args) : args, callId];
+    });
+  const toolSchemas = getAllOpenAIToolSchemas();
+  const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
+  const openRoundStream = async function* (_roundNo, sendWire) {
+    let frames = [];
+    try {
+      for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
+        if (chunk.type === 'text') frames.push({ type: 'chunk', text: chunk.content });
+        else if (chunk.type === 'tool_call') frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments });
+      }
+      frames.push({ type: 'end', payload: {} });
+    } catch (e) {
+      frames.push({ type: 'error', message: e.message });
+    }
+    for (const f of frames) yield f;
+  };
+  const executedTools = [];
+  try {
+    for await (const kev of agentKernel.run({
+      wireMessages: wire,
+      openRoundStream,
+      toolExecutor,
+      buildToolMetas,
+      maxRounds: config.maxRounds || 12,
+      abortCheck: () => session.stopRequested === true,
+      modelHint: llmConfig.model,
+    })) {
+      // 只转发工具事件；子任务的思考流(chunk)不推给前端，避免污染最终答案气泡
+      if (kev.kind === 'tool_calls_issued') {
+        for (const [name, , callId] of kev.toolMetas) {
+          if (name === 'agent') continue;
+          const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
+          broadcast(ws, { type: 'tool_call', tool: name, args });
+          executedTools.push({ id: callId, title: `${name}`, status: 'running' });
+        }
+      } else if (kev.kind === 'tool_result') {
+        broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText });
+      } else if (kev.kind === 'error') {
+        return { content: '', executedTools, error: kev.message };
+      }
+    }
+  } catch (err) {
+    return { content: '', executedTools, error: err.message };
+  }
+  const text = identity.filterOutput(wireToFinalText(wire));
+  return { content: text, executedTools };
+}
+
+// 主编排：规划 → 执行(打勾) → 自检 → 循环 → 汇总+遗留
+async function runPlannedLoop({ ws, session, llm, system, history, config }) {
+  const question = history[history.length - 1]?.content || '';
+  const MAX_ITER = config.maxPlanIterations || 3;
+  const allExecuted = [];
+  let context = '';
+  let remaining = [];
+
+  for (let iter = 1; iter <= MAX_ITER; iter++) {
+    if (session.stopRequested) break;
+    broadcast(ws, { type: 'thinking', message: iter === 1 ? '🧠 正在分解任务...' : `🔁 第 ${iter} 轮：针对缺口再分解...` });
+
+    let subtasks = [];
+    try {
+      subtasks = await planDecompose(llm, question, context, iter);
+    } catch (e) {
+      subtasks = iter === 1 ? [{ title: question }] : [];
+    }
+    if (!subtasks || subtasks.length === 0) break;
+
+    const planItems = subtasks.map((s, i) => ({ id: `st_${iter}_${i}`, title: String(s.title).trim() }));
+    broadcast(ws, {
+      type: 'plan',
+      plan: {
+        title: iter === 1 ? '任务分解' : `补充任务（第 ${iter} 轮）`,
+        subtaskCount: planItems.length,
+        subtasks: planItems.map((p) => ({ id: p.id, title: p.title, type: 'general' })),
+      },
+    });
+
+    for (const item of planItems) {
+      if (session.stopRequested) { broadcast(ws, { type: 'subtask_error', taskId: item.id, title: item.title, message: '已停止' }); break; }
+      broadcast(ws, { type: 'subtask_start', taskId: item.id, title: item.title });
+      const wire = [
+        { role: 'system', content: system },
+        ...history.slice(-6),
+        {
+          role: 'user',
+          content: `请完成以下子任务并直接给出结果（可调用工具获取真实数据，禁止编造）：\n【子任务】${item.title}\n\n这是为回答原始问题「${question}」而分解出的一步。` +
+            (context ? `\n\n已有上下文（供参考，勿重复）：\n${context.slice(-2000)}` : ''),
+        },
+      ];
+      const res = await runSubtaskKernel({ ws, session, llm, wireMessages: wire, config });
+      const out = (res.content || '').trim() || '(该子任务未产生有效输出)';
+      allExecuted.push({ id: item.id, title: item.title, status: res.error ? 'error' : 'done' });
+      context += `\n### ${item.title}\n${out}\n`;
+      if (res.error) broadcast(ws, { type: 'subtask_error', taskId: item.id, title: item.title, message: res.error });
+      else broadcast(ws, { type: 'subtask_done', taskId: item.id, title: item.title });
+    }
+
+    // 自检：结果是否回答了原问题
+    if (session.stopRequested) break;
+    broadcast(ws, { type: 'thinking', message: '🔎 自检：结果是否回答了问题...' });
+    let check = { satisfied: true, missing: [] };
+    try {
+      check = await planSelfCheck(llm, question, context);
+    } catch (e) { check = { satisfied: true, missing: [] }; }
+    if (check.satisfied) { remaining = []; break; }
+    remaining = check.missing || [];
+    if (iter === MAX_ITER) break; // 达到最大轮次仍未满足 → 下面汇总时报告遗留
+  }
+
+  // 汇总最终答案（含遗留问题）
+  broadcast(ws, { type: 'thinking', message: '✨ 汇总最终答案...' });
+  let finalText = '';
+  try {
+    finalText = await planSynthesize(llm, question, context, remaining);
+  } catch (e) { finalText = ''; }
+  finalText = identity.filterOutput((finalText || '').trim());
+  if (!finalText) {
+    finalText = context.trim() || '抱歉，本轮未能获取有效结果，请重试或更换模型。';
+    if (remaining.length) finalText += `\n\n⚠️ 遗留问题：\n- ${remaining.join('\n- ')}`;
+  }
+
+  // 透明性安全网：全程未调用任何工具时补一句诚实说明
+  const NO_TOOL_HINTS = ['未经实时工具核实', '未经工具核实', '基于我的知识', '基于已有知识', '未经核实'];
+  if ((ws.__toolCallsThisTurn || 0) === 0 && !NO_TOOL_HINTS.some((h) => finalText.includes(h))) {
+    finalText += '\n\n（我根据经验认为：以上内容基于我的已有知识作答，未经实时工具核实。）';
+  }
+
+  history.push({ role: 'assistant', content: finalText });
+  broadcast(ws, { type: 'done', content: finalText, subtasks: allExecuted });
   return { content: finalText };
 }
 
@@ -2155,8 +2388,9 @@ async function handleChat(sessionId, session, msg) {
       broadcast(ws, { type: 'thinking', message: '思考中...' });
       await runAgentLoop({ ws, session, llm, system, history, config: cfg, useTools: false });
     } else {
-      broadcast(ws, { type: 'thinking', message: '🧠 正在规划并执行任务（含工具调用 / 子 Agent）...' });
-      await runAgentLoop({ ws, session, llm, system, history, config: cfg, useTools: true });
+      // 复杂问题：先分解任务 → 逐项执行(打勾) → 自检 → 不满足则再分解循环 → 汇总并报告遗留
+      broadcast(ws, { type: 'thinking', message: '🧠 正在规划并执行任务...' });
+      await runPlannedLoop({ ws, session, llm, system, history, config: cfg });
     }
   } catch (err) {
     broadcast(ws, { type: 'error', message: err.message });
