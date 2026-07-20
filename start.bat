@@ -99,6 +99,9 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+echo.
+echo [INFO] Press any key to close this window...
+pause
 exit /b 0
 
 :do_start
@@ -150,6 +153,9 @@ if "%READY%"=="1" (
     pause
     exit /b 1
 )
+echo.
+echo [INFO] Press any key to close this window...
+pause
 exit /b 0
 
 REM Subroutine: free_port <port>
