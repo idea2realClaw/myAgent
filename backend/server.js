@@ -14,6 +14,13 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import dns from 'node:dns';
+
+// 强制 IPv4 优先：部分网络（如香港）下 Yahoo 等域名的 DNS 返回 IPv6 优先，
+// 而 Node fetch(undici) 在双栈环境会先连 IPv6、该 IPv6 路由不通且回退不及时，
+// 导致 UND_ERR_CONNECT_TIMEOUT（"fetch failed"）。浏览器有正确的双栈回退所以能通。
+// 此设置让所有 fetch 优先走 IPv4，修复 stock_price / web_fetch 等工具的外网超时。
+dns.setDefaultResultOrder('ipv4first');
 
 const execAsync = promisify(exec);
 
