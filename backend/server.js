@@ -765,6 +765,7 @@ function buildSystemPrompt(provider = 'openai') {
   (a) 只有当工具【真实执行】后，才可在回答中点出「我调用了 <工具名> 工具（数据来源：<真实来源>）」并简述取到了什么。**严禁凭空/想象声称调用了任何工具、或声称某数据来自某来源（如"数据来源：Google/Bing/百度"）**；若你实际上并未调用工具，就【绝不】写任何"我调用了 XX"或"数据来源：YY"的措辞——宁可少说，不可编造。
   (b) 凡本次回答全程未调用任何工具、仅依靠模型已有知识/训练经验作答，必须在回答最开头显式声明，例如：「我根据经验认为：…」或「（以下为基于我已有知识的回答，未经实时工具核实）…」。即使只是闲聊或常识性问题也要照此声明，绝不能把未经验证的内容伪装成已通过工具核实的事实。诚实永远优先于语句流畅。
   (c) 可用工具提示：联网搜索请用 web_search 工具（数据源 DuckDuckGo，**不是** Google/Bing）；deep-search 只是一个【技能/方法名】，**不是**可直接返回数据的工具，不要声称"调用了 deep-search 工具"或"数据来源：Google/Bing"。
+  (d) 严禁在回答中以 JSON 文本形式"调用"工具或技能，例如 '{"tool":"..."}' / '{"skill":"..."}' / '{"invocation":"..."}' / '{"name":"..."}' 这类写法——工具/技能由系统在后台自动调用，你只需用自然语言描述需求，或直接使用原生 function calling。若需要联网检索，请直接调用 web_search 工具，绝不要写 '{"skill":"deep-search",...}' 这样的伪调用（它不会被执行，且会被系统视为编造并拦截）。
 - 股票历史/区间查询（如"过去五天""近一周""历史走势"）：调用 stock_price 工具时务必传入 range 参数（"5d"=过去5天、"1mo"=过去1月、"3mo"、"1y"），工具会返回 history 数组（每日 开盘/最高/最低/收盘/成交量），据此归纳趋势。绝不要用默认的"当前快照"冒充历史数据。
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
@@ -2099,6 +2100,18 @@ async function runMainAgentTool(args, { ws, session, llmConfig, callId }) {
 async function runSkillTool(args, callId, { ws, session }) {
   const start = Date.now();
   const name = args.name;
+  // 防御：deep-search 不是真实联网工具，重定向为 web_search 真实检索，避免"调用不存在的 skill"
+  if (/^deep[-_]?search$/i.test(name)) {
+    const query = String(args.query || args.question || args.input || args.prompt || '').slice(0, 300);
+    console.log(`[SkillTool] 拦截伪 skill 调用 deep-search → 重定向 web_search (query=${query || '(空)'})`);
+    if (session && session.__realToolNames) session.__realToolNames.add('web_search');
+    const result = await executeTool({ name: 'web_search', arguments: { query } });
+    const ok = result.success !== false;
+    const raw = result.output != null ? String(result.output) : (result.error || '');
+    const resultText = `## 深度检索结果（已通过 web_search 真实检索）\n\n${truncateToolResult(identity.filterOutput(raw))}`;
+    broadcast(ws, { type: 'tool_result', success: ok, output: resultText });
+    return { partial: false, callId, toolName: 'web_search', resultText, ok, durationMs: Date.now() - start };
+  }
   const skill = skillLoader.get(name);
   if (!skill || !skill.enabled) {
     return { partial: false, callId, toolName: 'skill', resultText: `Skill '${name}' not found or disabled.`, ok: false, durationMs: Date.now() - start };
@@ -2319,6 +2332,9 @@ function enforceToolClaimHonesty(finalText, realToolNames) {
   const real = realToolNames instanceof Set ? realToolNames : new Set(Array.isArray(realToolNames) ? realToolNames : []);
   let text = finalText;
 
+  // 0) 删除残留的伪工具/技能调用 JSON 文本（如 {"skill":"deep-search","query":...}），避免呈现"调用了不存在的 skill"
+  text = text.replace(/\{[^{}]*deep[-_]?search[^{}]*\}/gi, '');
+
   // 1) 检测"我调用了 X 工具（数据来源：Y）"等整句声明；仅当声明的工具 X 不在真实集合里才剔除
   const claimRe = /我(?:调用|使用|运行|执行)了?\s*([A-Za-z0-9_\-]+)\s*工具?(?:\s*[（(]?\s*数据来源[：:]\s*[^）)\n]+[）)])?/g;
   text = text.replace(claimRe, (m, tool) => {
@@ -2358,14 +2374,16 @@ function looksLikeInvocation(text) {
     /\{\s*"invocation"/i.test(text) ||
     /\{\s*"tool"\s*:/i.test(text) ||
     /\{\s*"command"\s*:/i.test(text) ||
+    /\{\s*"skill"\s*:/i.test(text) ||
     /\{\s*"name"\s*:\s*"(web_fetch|web_search|shell_execute|python_execute|http_request|file_read|file_write|file_edit|file_list|file_glob|file_grep|agent|skill)"/i.test(text)
   );
 }
 
 // 从模型吐出的文本中解析「工具调用 JSON」。
-// 支持格式：{"tool":"x","arguments":{...}} / {"name":"x"} / {"invocation":"x"} / {"function":{"name":"x"}}，
-// 容许 ```json 围栏与前后杂字。仅当 JSON 占文本主体且工具名为已知工具时才返回，
-// 避免把“举例说明”类文本误判为工具调用。
+// 支持格式：{"tool":"x","arguments":{...}} / {"name":"x"} / {"invocation":"x"} / {"skill":"x"} / {"function":{"name":"x"}}，
+// 容许 ```json 围栏与前后杂字。仅当 JSON 占文本主体时才返回，避免把“举例说明”类文本误判为工具调用。
+// 关键防御：deep-search 不是真实工具，其意图是「联网检索」→ 一律重定向到 web_search 真实执行；
+// 其他真实存在的技能（如 {"skill":"stock-price"}）则重定向为 skill 工具调用。
 function parseInvocation(text) {
   if (!text || typeof text !== 'string') return null;
   let s = text.trim();
@@ -2376,10 +2394,29 @@ function parseInvocation(text) {
   if (m[0].length < s.length * 0.6) return null; // JSON 须占文本主体
   let obj;
   try { obj = JSON.parse(m[0]); } catch { return null; }
-  const name = obj.tool || obj.name || obj.invocation || (obj.function && obj.function.name);
+  const name = obj.tool || obj.name || obj.invocation || obj.skill || (obj.function && obj.function.name);
   if (!name || typeof name !== 'string') return null;
+
+  // 重定向：deep-search 不是真实可返回数据的工具 → 映射到 web_search
+  if (/^deep[-_]?search$/i.test(name)) {
+    let args = obj.arguments ?? obj.args ?? obj.parameters ?? {};
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+    const query = String(obj.query || args.query || args.q || '').slice(0, 300);
+    if (!query) return null; // 无查询词则放弃，避免空调用
+    console.log(`[parseInvocation] 重定向伪调用 deep-search → web_search (query=${query})`);
+    return { name: 'web_search', args: { query } };
+  }
+
   const known = new Set([...toolRegistry.getAllTools().map((t) => t.name), 'agent', 'skill']);
-  if (!known.has(name)) return null;
+  if (!known.has(name)) {
+    // 若声明的是真实存在的技能（如 {"skill":"stock-price"}），重定向为 skill 工具调用
+    if (obj.skill && skillLoader && typeof skillLoader.get === 'function' && skillLoader.get(name)) {
+      let args = obj.arguments ?? obj.args ?? obj.parameters ?? {};
+      if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+      return { name: 'skill', args: { name, ...args } };
+    }
+    return null; // 未知工具/技能 → 不执行，避免调用不存在的东西
+  }
   let args = obj.arguments ?? obj.args ?? obj.parameters ?? {};
   if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
   return { name, args };
