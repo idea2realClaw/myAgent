@@ -22,14 +22,12 @@ REM Find Node.js and add to PATH
 set "NODE_FOUND=0"
 set "NODE_PATH="
 
-REM Check WorkBuddy Node.js first (preferred)
 if exist "%USERPROFILE%\.workbuddy\binaries\node\versions\22.22.2\node.exe" (
     set "NODE_PATH=%USERPROFILE%\.workbuddy\binaries\node\versions\22.22.2"
     set "NODE_FOUND=1"
     goto :node_found
 )
 
-REM Check common Node.js locations
 if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" (
     set "NODE_PATH=%LOCALAPPDATA%\Programs\nodejs"
     set "NODE_FOUND=1"
@@ -40,7 +38,6 @@ if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" (
     set "NODE_PATH=%APPDATA%\nvm\default"
     set "NODE_FOUND=1"
 ) else (
-    REM Try to find node in PATH
     where node >nul 2>&1
     if not errorlevel 1 (
         for /f "tokens=*" %%i in ('where node') do set "NODE_PATH=%%~dpi"
@@ -56,7 +53,6 @@ if "%NODE_FOUND%"=="0" (
 )
 
 echo [INFO] Node.js found at: %NODE_PATH%
-REM Add node to PATH for bash
 set "PATH=%NODE_PATH%;%PATH%"
 
 REM Try to find bash (Git Bash)
@@ -75,9 +71,7 @@ if not defined BASH_CMD (
 echo [INFO] Using bash: %BASH_CMD%
 echo.
 
-REM ============================================================
 REM Check if ports are in use; if so, kill old processes first
-REM ============================================================
 set "APP_PORT=3737"
 set "CTRL_PORT=13737"
 
@@ -86,18 +80,16 @@ call :free_port %APP_PORT%
 call :free_port %CTRL_PORT%
 echo.
 
-REM ============================================================
-REM 调度：Windows 下用 PowerShell 完全分离地拉起 daemon
-REM （Start-Process 创建的进程不属于本 CMD 窗口的进程组，关闭窗口不会被杀）
-REM 其余子命令（stop/restart/status/logs/log）仍交给 start.sh
-REM ============================================================
+REM Windows start: launch daemon detached via PowerShell Start-Process
+REM (process is NOT in this CMD window group, survives window close)
+REM Other subcommands (stop/restart/status/logs) are handled by start.sh
 cd /d "%~dp0"
 set "ARG1=%~1"
 
 if "%ARG1%"=="start" goto :do_start
 if "%ARG1%"=="" goto :do_start
 
-REM 其它子命令 → 交给 start.sh
+REM Other subcommands -> start.sh
 echo [INFO] Running: start.sh %*
 echo.
 "%BASH_CMD%" -c "./start.sh %*"
@@ -112,7 +104,6 @@ exit /b 0
 :do_start
 echo [INFO] Working directory: %CD%
 
-REM 端口清理已在上方完成（:free_port 3737 / 13737）
 set "DAEMON_JS=%CD%\backend\daemon.js"
 set "DAEMON_LOG=%CD%\logs\daemon-stdout.log"
 set "DAEMON_ERR=%CD%\logs\daemon-stderr.log"
@@ -125,7 +116,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [INFO] Waiting for daemon to be ready (polling control /health)...
+echo [INFO] Waiting for daemon to be ready (polling 3737 /api/health)...
 set "READY=0"
 where curl >nul 2>&1
 if errorlevel 1 (
@@ -147,10 +138,10 @@ for /L %%i in (1,1,25) do (
 :started
 if "%READY%"=="1" (
     echo.
-    echo [INFO] ✅ Daemon started.
+    echo [INFO] Daemon started.
     echo [INFO]    URL:     http://localhost:3737
     echo [INFO]    Control: http://localhost:13737
-    echo [INFO]    daemon 在后台独立运行，关闭本窗口不会影响它
+    echo [INFO]    Daemon runs in background; closing this window will NOT stop it.
 ) else (
     echo.
     echo [ERROR] Failed to start Agent WebUI
@@ -161,10 +152,8 @@ if "%READY%"=="1" (
 )
 exit /b 0
 
-REM ============================================================
 REM Subroutine: free_port <port>
 REM Finds any process LISTENING on the given port and kills it
-REM ============================================================
 :free_port
 set "PORT=%~1"
 set "PORT_FOUND=0"
