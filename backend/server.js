@@ -761,9 +761,10 @@ function buildSystemPrompt(provider = 'openai') {
 - Decompose complex tasks into parallel subtasks when beneficial.
 - Be direct, thorough, and resourceful.
 - 当技能或工具返回结构化数据（JSON、表格、原始 API 输出等）时，必须先用自然语言向用户做总结：先给关键结论，再列出重要数字（如价格、涨跌幅、成交量、更新时间等），绝不要直接把原始 JSON 或原始数据原样粘贴给用户。
-- 透明性铁律（最高优先级，必须严格遵守）：
-  (a) 凡本次回答中调用了任何工具（如 stock_price、web_search、python 等），必须在回答里明确点出「我调用了 <工具名> 工具（数据来源：<来源>）」，并简述取到了什么。
+  - 透明性铁律（最高优先级，必须严格遵守）：
+  (a) 只有当工具【真实执行】后，才可在回答中点出「我调用了 <工具名> 工具（数据来源：<真实来源>）」并简述取到了什么。**严禁凭空/想象声称调用了任何工具、或声称某数据来自某来源（如"数据来源：Google/Bing/百度"）**；若你实际上并未调用工具，就【绝不】写任何"我调用了 XX"或"数据来源：YY"的措辞——宁可少说，不可编造。
   (b) 凡本次回答全程未调用任何工具、仅依靠模型已有知识/训练经验作答，必须在回答最开头显式声明，例如：「我根据经验认为：…」或「（以下为基于我已有知识的回答，未经实时工具核实）…」。即使只是闲聊或常识性问题也要照此声明，绝不能把未经验证的内容伪装成已通过工具核实的事实。诚实永远优先于语句流畅。
+  (c) 可用工具提示：联网搜索请用 web_search 工具（数据源 DuckDuckGo，**不是** Google/Bing）；deep-search 只是一个【技能/方法名】，**不是**可直接返回数据的工具，不要声称"调用了 deep-search 工具"或"数据来源：Google/Bing"。
 - 股票历史/区间查询（如"过去五天""近一周""历史走势"）：调用 stock_price 工具时务必传入 range 参数（"5d"=过去5天、"1mo"=过去1月、"3mo"、"1y"），工具会返回 history 数组（每日 开盘/最高/最低/收盘/成交量），据此归纳趋势。绝不要用默认的"当前快照"冒充历史数据。
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
@@ -1481,6 +1482,9 @@ async function classifyQuestion(llm, userMessage) {
     // 实时金融 / 行情查询：必须走带工具路径去真实拉取数据
     '价格', '股价', '行情', '市值', '指数', '汇率', '基金', '涨跌', '多少', '报价',
     'etf', 'stock', 'price', 'quote', 'ticker',
+    // 实时 / 新闻 / 当前信息：必须走带工具路径，避免模型凭记忆编造
+    '最新', '新闻', '消息', '比赛', '赛果', '比分', '今日', '今天', '昨天', '现在', '当前', '实时', '天气',
+    'news', 'latest', 'result', 'score', 'today', 'weather', 'live', 'update', 'current',
   ];
   for (const aw of actionWords) {
     if (trimmed.includes(aw)) return 'complex';
@@ -1745,6 +1749,9 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
     }
   }
 
+  // 真实性闸门：校验"调用了某工具/数据来源"等声明是否真实发生，剥离虚构声明（如声称调用 deep-search / 数据来源 Google/Bing）
+  finalText = enforceToolClaimHonesty(finalText, session.__realToolNames);
+
   // 透明性安全网：本轮未调用任何工具时，若答案未声明，则补一句诚实说明
   // （LLM 不一定每次都自觉声明，这里后端兜底，与系统提示的"透明性铁律"双保险）
   // 用 ws.__toolCallsThisTurn（broadcast 层统计的本轮 tool_call/tool_result 次数）判断，
@@ -1848,6 +1855,9 @@ async function planSynthesize(llm, question, context, remaining) {
 }
 
 // 执行单个子任务：agentKernel 带工具跑一趟，转发 tool_call/tool_result（不发 chunk/done），返回文本
+// 退化兜底：若子任务明显需要联网（搜索/新闻/最新/比赛/价格…）但模型没有真正调用任何工具（退化成凭记忆编造），
+// 则强制重试一次（在提示中要求必须调用 web_search 获取真实数据），避免把编造内容当真实结果汇总。
+const NEED_NET_RE = /搜索|搜|查|新闻|最新|比赛|赛果|比分|价格|行情|天气|汇率|结果|result|news|latest|search|price|score|today|weather|live|fetch|查询/i;
 async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
   const llmConfig = {
     provider: config.provider || 'openrouter',
@@ -1856,8 +1866,9 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
     baseURL: config.provider === 'openrouter' ? (config.baseURL || 'https://openrouter.ai/api/v1') : (config.baseURL || undefined),
   };
   subAgentManager.llmConfig = llmConfig;
-  const wire = [...wireMessages];
-  const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
+  const toolSchemas = getAllOpenAIToolSchemas();
+  const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
+  const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas);
   const buildToolMetas = (rawToolCalls, roundNo) =>
     rawToolCalls.map((tc, i) => {
       const name = tc.name || (tc.function && tc.function.name) || 'unknown';
@@ -1865,41 +1876,58 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
       const callId = tc.id || `call_${roundNo}_${i}`;
       return [name, typeof args === 'string' ? safeParseArgs(args) : args, callId];
     });
-  const toolSchemas = getAllOpenAIToolSchemas();
-  const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
-  const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas);
-  const executedTools = [];
-  const toolResultsText = [];
-  try {
-    for await (const kev of agentKernel.run({
-      wireMessages: wire,
-      openRoundStream,
-      toolExecutor,
-      buildToolMetas,
-      maxRounds: config.maxRounds || 12,
-      abortCheck: () => session.stopRequested === true,
-      modelHint: llmConfig.model,
-    })) {
-      // 只转发工具事件；子任务的思考流(chunk)不推给前端，避免污染最终答案气泡
-      if (kev.kind === 'tool_calls_issued') {
-        for (const [name, , callId] of kev.toolMetas) {
-          if (name === 'agent') continue;
-          const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
-          broadcast(ws, { type: 'tool_call', tool: name, args });
-          executedTools.push({ id: callId, title: `${name}`, status: 'running' });
+
+  // 单次执行：返回 { content, executedTools, error }
+  async function runOnce(wire) {
+    const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
+    const executedTools = [];
+    const toolResultsText = [];
+    try {
+      for await (const kev of agentKernel.run({
+        wireMessages: wire,
+        openRoundStream,
+        toolExecutor,
+        buildToolMetas,
+        maxRounds: config.maxRounds || 12,
+        abortCheck: () => session.stopRequested === true,
+        modelHint: llmConfig.model,
+      })) {
+        // 只转发工具事件；子任务的思考流(chunk)不推给前端，避免污染最终答案气泡
+        if (kev.kind === 'tool_calls_issued') {
+          for (const [name, , callId] of kev.toolMetas) {
+            if (name === 'agent') continue;
+            const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
+            broadcast(ws, { type: 'tool_call', tool: name, args });
+            executedTools.push({ id: callId, title: `${name}`, status: 'running' });
+          }
+        } else if (kev.kind === 'tool_result') {
+          broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText });
+          toolResultsText.push(kev.resultText || '');
+        } else if (kev.kind === 'error') {
+          return { content: '', executedTools, error: kev.message };
         }
-      } else if (kev.kind === 'tool_result') {
-        broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText });
-        toolResultsText.push(kev.resultText || '');
-      } else if (kev.kind === 'error') {
-        return { content: '', executedTools, error: kev.message };
       }
+    } catch (err) {
+      return { content: '', executedTools, error: err.message };
     }
-  } catch (err) {
-    return { content: '', executedTools, error: err.message };
+    const text = identity.filterOutput((wireToFinalText(wire) + '\n' + toolResultsText.filter(Boolean).join('\n')).trim());
+    return { content: text, executedTools };
   }
-  const text = identity.filterOutput((wireToFinalText(wire) + '\n' + toolResultsText.filter(Boolean).join('\n')).trim());
-  return { content: text, executedTools };
+
+  let res = await runOnce([...wireMessages]);
+
+  // 强制联网重试：子任务需联网但模型退化没调任何工具 → 再跑一次并强制调用 web_search
+  const wireText = JSON.stringify(wireMessages);
+  if (!res.error && res.executedTools.length === 0 && NEED_NET_RE.test(wireText)) {
+    const forcedWire = [...wireMessages];
+    const last = forcedWire[forcedWire.length - 1];
+    if (last && last.role === 'user') {
+      last.content += '\n\n【强制要求】本子任务必须调用 web_search 工具获取真实数据，严禁凭记忆编造任何事实、比分、日期或数据来源。若 web_search 无结果，请明确说明"未检索到相关信息"。';
+    }
+    res = await runOnce(forcedWire);
+  }
+
+  return res;
 }
 
 // 主编排：规划 → 执行(打勾) → 自检 → 循环 → 汇总+遗留
@@ -1971,6 +1999,7 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
     finalText = await planSynthesize(llm, question, context, remaining);
   } catch (e) { finalText = ''; }
   finalText = identity.filterOutput((finalText || '').trim());
+  finalText = enforceToolClaimHonesty(finalText, session.__realToolNames);
   if (!finalText) {
     finalText = context.trim() || '抱歉，本轮未能获取有效结果，请重试或更换模型。';
     if (remaining.length) finalText += `\n\n⚠️ 遗留问题：\n- ${remaining.join('\n- ')}`;
@@ -1999,6 +2028,7 @@ async function* makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfi
         return await runSkillTool(args, callId, { ws, session });
       }
       const result = await executeTool({ name, arguments: args });
+      if (session && session.__realToolNames) session.__realToolNames.add(name);
       const ok = result.success !== false;
       const raw = result.output != null ? String(result.output) : (result.error || '');
       return { partial: false, callId, toolName: name, resultText: truncateToolResult(raw), ok, durationMs: Date.now() - start };
@@ -2256,8 +2286,46 @@ function wireToFinalText(wire) {
   return '';
 }
 
-// 检测模型是否在「无工具可用」的简单路径下退化成输出了“未执行的工具/技能调用”JSON。
-// 例如 { "invocation": "deep-search", "query": "..." } 或 { "tool": "...", "arguments": ... }。
+// 真实性闸门：校验最终答案里"调用了某工具 / 数据来源"等声明是否真实发生。
+// 若模型声称调用了某工具或某数据来源，但本轮并未真实执行该工具，则剥离虚假声明并加诚实提示，
+// 避免把"我调用了 deep-search（数据来源：Google/Bing）"这类编造当作事实呈现给用户。
+function enforceToolClaimHonesty(finalText, realToolNames) {
+  if (!finalText || typeof finalText !== 'string') return finalText || '';
+  const real = realToolNames instanceof Set ? realToolNames : new Set(Array.isArray(realToolNames) ? realToolNames : []);
+  let text = finalText;
+
+  // 1) 检测"我调用了 X 工具（数据来源：Y）"等整句声明；仅当声明的工具 X 不在真实集合里才剔除
+  const claimRe = /我(?:调用|使用|运行|执行)了?\s*([A-Za-z0-9_\-]+)\s*工具?(?:\s*[（(]?\s*数据来源[：:]\s*[^）)\n]+[）)])?/g;
+  text = text.replace(claimRe, (m, tool) => {
+    const t = String(tool);
+    if (real.has(t) || real.has(t.toLowerCase())) return m; // 真实调用过 → 保留
+    if (['工具', '搜索', 'web', 'search', 'tool'].includes(t.toLowerCase())) return m; // 泛指词 → 保留
+    return ''; // 虚构工具 → 删除该声明
+  });
+
+  // 2) 删除独立的虚假来源标注（本系统 web_search 数据源是 DuckDuckGo，不是下列来源）
+  text = text.replace(/数据来源[：:]\s*(Google|Bing|谷歌|百度|Baidu|维基|Wikipedia|百度百科)\b[^。\n]*/gi, '');
+
+  // 3) 本轮无任何真实工具调用时，删除"根据检索/搜索/查询结果"等暗示已真实检索的措辞
+  if (real.size === 0) {
+    text = text.replace(/根据(?:\s*我)?\s*(?:检索|搜索|查询|抓取|联网)[^，。\n]*?结果/g, '');
+  }
+
+  // 4) deep-search 非工具，统一改述，避免残留"调用了 deep-search 工具"的误导
+  text = text.replace(/调用了\s*deep-?search\s*(?:工具)?/gi, '进行了深度检索尝试');
+  text = text.replace(/\bdeep-?search\b/gi, '深度检索');
+
+  // 5) 若原始文本声称调用了工具/来源、但本轮真实无任何工具调用 → 开头加诚实提示（内容由模型凭记忆生成，不可信）
+  const claimed = /我(?:调用|使用|运行|执行)了?\s*[A-Za-z0-9_\-]+\s*工具|数据来源[：:]/i.test(finalText);
+  if (claimed && real.size === 0) {
+    text = '⚠️ 提示：以下内容由模型基于已有知识生成，未经实时工具核实；其中提及的"工具调用/数据来源"并非真实工具返回，请谨慎参考。\n\n' + text;
+  }
+
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// 检测模型是否在「无工具可用」的简单路径下退化成输出了“未执行的工具调用”JSON。
+// 例如 { "tool": "web_search", "arguments": { "query": "..." } }。
 // 命中则说明本应走带工具的 complex 路径，需要升级重跑。
 function looksLikeInvocation(text) {
   if (!text || typeof text !== 'string') return false;
@@ -2326,6 +2394,7 @@ function makeOpenRoundStream(llm, supportsTools, toolSchemas) {
 async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
   ws.__toolCallsThisTurn = 0; // 重置本轮工具调用计数（透明性安全网用）
+  session.__realToolNames = new Set(); // 重置本轮真实执行的工具名集合（真实性闸门用）
   const userMessage = msg.content;
   const conversationId = msg.conversationId || 'unknown';
 
