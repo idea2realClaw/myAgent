@@ -3213,14 +3213,14 @@ function restartServer() {
   if (!confirm('重启服务器？这将断开所有客户端连接，但会零停机时间重启。')) return;
   showToast('正在重启服务器（零停机时间）...', 'info');
   
-  // Call daemon REST API
-  fetch('http://127.0.0.1:13737/restart', { method: 'POST' })
+  // Self-restart endpoint on the same port (no daemon, no extra port)
+  fetch('http://127.0.0.1:3737/api/restart', { method: 'POST' })
     .then(r => r.json())
     .then(result => {
-      if (result.success) {
+      if (result.ok) {
         showToast('服务器重启中...', 'info');
-        // Wait for server to come back
-        setTimeout(checkServerReady, 5000);
+        // Wait for server to come back, then reload the page
+        setTimeout(() => { checkServerReady(); }, 4000);
       } else {
         showToast('重启失败: ' + (result.error || '未知错误'), 'error');
       }

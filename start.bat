@@ -72,17 +72,15 @@ if not defined BASH_CMD (
 echo [INFO] Using bash: %BASH_CMD%
 echo.
 
-REM Check if ports are in use; if so, kill old processes first
+REM Check if port is in use; if so, kill old process first (single process, no extra control port)
 set "APP_PORT=3737"
-set "CTRL_PORT=13737"
 
-echo [INFO] Checking ports before start...
+echo [INFO] Checking port before start...
 call :free_port %APP_PORT%
-call :free_port %CTRL_PORT%
 echo.
 
-REM Windows start: launch daemon detached via PowerShell Start-Process
-REM (process is NOT in this CMD window group, survives window close)
+REM Windows start: launch the single server process in FOREGROUND (logs stream here).
+REM The process self-monitors and self-restarts (no separate daemon, no extra control port).
 REM Other subcommands (stop/restart/status/logs) are handled by start.sh
 cd /d "%~dp0"
 set "ARG1=%~1"
@@ -108,19 +106,19 @@ exit /b 0
 :do_start
 echo [INFO] Working directory: %CD%
 
-set "DAEMON_JS=%CD%\backend\daemon.js"
+set "SERVER_JS=%CD%\backend\server.js"
 
-echo [INFO] Launching daemon in FOREGROUND (backend logs stream to this window)...
+echo [INFO] Launching MyAgent (single process, self-monitoring, no daemon/extra port)...
 echo [INFO]    URL:     http://localhost:3737
-echo [INFO]    Control: http://localhost:13737
+echo [INFO]    Logs:    backend logs print below (also at logs\agent-webui-server.log)
 echo [INFO]    Press Ctrl+C to stop the agent (closing this window stops it too).
 echo.
 
-"%NODE_PATH%\node.exe" "%DAEMON_JS%"
+"%NODE_PATH%\node.exe" "%SERVER_JS%"
 set "EXITCODE=%errorlevel%"
 
 echo.
-echo [INFO] Daemon exited with code %EXITCODE%.
+echo [INFO] MyAgent exited with code %EXITCODE%.
 echo [INFO] Press any key to close this window...
 pause
 exit /b %EXITCODE%

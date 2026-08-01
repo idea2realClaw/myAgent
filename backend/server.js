@@ -10,7 +10,7 @@ import { WebSocketServer } from 'ws';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
@@ -787,6 +787,23 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
 });
 
+// Self-restart endpoint (no daemon / no extra port).
+// The single server process re-executes itself on the same files.
+// Restricted to localhost + same-origin to block cross-site CSRF.
+app.post('/api/restart', (req, res) => {
+  const ip = req.socket.remoteAddress || '';
+  const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!isLocal) return res.status(403).json({ error: 'forbidden' });
+  const origin = req.headers.origin || req.headers.referer || '';
+  const sameOrigin =
+    origin === '' ||
+    origin.startsWith(`http://localhost:${PORT}`) ||
+    origin.startsWith(`http://127.0.0.1:${PORT}`);
+  if (!sameOrigin) return res.status(403).json({ error: 'csrf' });
+  res.json({ ok: true, message: 'restarting' });
+  selfRestart();
+});
+
 // Detailed status check (includes model connectivity)
 app.get('/api/status', async (req, res) => {
   // If cache is fresh (< 30s), return it
@@ -1145,10 +1162,8 @@ wss.on('connection', (ws) => {
         broadcast(ws, { type: 'subagents_cascaded_abort', ids: cascaded });
       }
     } else if (msg.type === 'restart') {
-      // Request graceful restart (daemon will handle this)
       broadcast(ws, { type: 'restarting', message: 'Server restarting...' });
-      // Send SIGUSR1 to self (daemon will detect and restart)
-      process.kill(process.pid, 'SIGUSR1');
+      selfRestart();
     } else if (msg.type === 'exec_stream') {
       // Real-time streaming execution
       await handleExecStream(ws, session, msg);
@@ -2671,11 +2686,81 @@ async function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Handle restart request from daemon (zero-downtime restart)
-// Daemon will start new process before stopping this one
+// ── Self-restart (no daemon / no extra port) ─────────────
+// The single server process restarts itself by re-executing node on the same
+// files. This removes the need for a separate daemon process and the extra
+// 13737 control port. Triggered by: POST /api/restart, the WS 'restart'
+// message, or SIGUSR1.
+let isRestarting = false;
+
+function selfRestart() {
+  if (isRestarting) return;
+  isRestarting = true;
+  console.log('\n[Restart] Self-restart: handing off to new instance...');
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'inherit',
+    detached: false,
+  });
+  let done = false; // true once old has either exited (handoff) or reclaimed the port
+  const finishOld = () => { if (done) return; done = true; process.exit(0); };
+  const reclaim = () => {
+    if (done) return;
+    done = true;
+    isRestarting = false;
+    console.error('[Restart] Handoff failed; old instance reclaiming port.');
+    try { if (!server.listening) server.listen(PORT); } catch (e) { console.error('[Restart] re-bind failed:', e.message); }
+  };
+  child.on('exit', (code) => { if (!done) reclaim(); });
+  child.on('error', (err) => { console.error('[Restart] spawn failed:', err.message); if (!done) reclaim(); });
+
+  // Release the port, then poll the new instance's health. The new instance
+  // binds 3737 as soon as the port is free (its own EADDRINUSE-retry covers
+  // the brief gap), so there is no need for the old process to keep holding it.
+  server.closeAllConnections?.();
+  server.close(() => {
+    console.log('[Restart] Port released by old instance; new instance taking over...');
+    const start = Date.now();
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch(`http://127.0.0.1:${PORT}/api/health`);
+        if (r.ok) {
+          clearInterval(poll);
+          console.log('[Restart] New instance healthy. Old instance exiting.');
+          finishOld();
+          return;
+        }
+      } catch (_e) { /* new instance not listening yet */ }
+      if (Date.now() - start > 15000) {
+        clearInterval(poll);
+        console.error('[Restart] New instance not healthy within 15s.');
+        try { child.kill(); } catch (_e) {}
+        reclaim();
+      }
+    }, 250);
+  });
+}
+
+// SIGUSR1 still works as a manual restart signal (e.g. `kill -USR1 <pid>`)
 process.on('SIGUSR1', () => {
-  console.log('\n[Restart] Received SIGUSR1, initiating graceful restart...');
-  gracefulShutdown('SIGUSR1');
+  console.log('\n[Restart] Received SIGUSR1, initiating self-restart...');
+  selfRestart();
+});
+
+// ── Crash self-monitoring ────────────────────────────────
+// If the process throws something fatal, log it and re-exec a fresh copy so a
+// transient crash doesn't take the agent down permanently. Guard against
+// restart loops: if we just started (<5s ago), exit hard instead.
+process.on('uncaughtException', (err) => {
+  console.error('\n[FATAL] uncaughtException:', err && err.stack ? err.stack : err);
+  if (!isRestarting && process.uptime() > 5) selfRestart();
+  else process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('\n[FATAL] unhandledRejection:', reason);
+  if (!isRestarting && process.uptime() > 5) selfRestart();
+  else process.exit(1);
 });
 
 // ============================================================
@@ -2731,36 +2816,59 @@ setMessageProcessor(async (message, context) => {
 // ============================================================
 
 const PORT = process.env.PORT || 3737;
-server.listen(PORT, () => {
-  console.log(`\n🚀 Agent WebUI Backend running at http://localhost:${PORT}`);
-  console.log(`   Identity: ${JSON.stringify(identity.getSummary())}`);
-  console.log(`   Skills loaded: ${skillLoader.getAll().length}`);
-  console.log(`   Config: ${CONFIG_FILE}\n`);
 
-  // ── Heartbeat Logger ─────────────────────────────────────
-  // Log heartbeat every 60 seconds to show server is alive
-  const HEARTBEAT_INTERVAL = 15 * 1000; // 15 seconds
-  const startTime = Date.now();
+// Start the HTTP server with EADDRINUSE retry. Retrying (instead of crashing)
+// removes the old daemon-style race where a new instance tried to bind 3737
+// while the old one still held it.
+function startServer() {
+  let attempts = 0;
+  const maxAttempts = 50;
+  const tryListen = () => {
+    attempts++;
+    const onError = (err) => {
+      if (err.code === 'EADDRINUSE' && attempts < maxAttempts) {
+        console.warn(`[Startup] Port ${PORT} in use, retrying (attempt ${attempts}/${maxAttempts})...`);
+        setTimeout(tryListen, 200);
+      } else {
+        console.error('[Startup] Fatal listen error:', err.message);
+        process.exit(1);
+      }
+    };
+    server.once('error', onError);
+    server.listen(PORT, () => {
+      server.removeListener('error', onError);
+      console.log(`\n🚀 Agent WebUI Backend running at http://localhost:${PORT}`);
+      console.log(`   Identity: ${JSON.stringify(identity.getSummary())}`);
+      console.log(`   Skills loaded: ${skillLoader.getAll().length}`);
+      console.log(`   Config: ${CONFIG_FILE}\n`);
 
-  const heartbeatTimer = setInterval(() => {
-    const uptime = Date.now() - startTime;
-    const uptimeMinutes = Math.floor(uptime / 60000);
-    const uptimeSeconds = Math.floor((uptime % 60000) / 1000);
-    
-    const memUsage = process.memoryUsage();
-    const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-    
-    const activeConnections = sessions.size;
-    
-    const timestamp = new Date().toISOString();
-    console.log(`[Heartbeat] ${timestamp} | Uptime: ${uptimeMinutes}m ${uptimeSeconds}s | Memory: ${memMB}MB | Active Connections: ${activeConnections}`);
-  }, HEARTBEAT_INTERVAL);
+      // ── Heartbeat Logger ─────────────────────────────────
+      // Log heartbeat every 60 seconds to show server is alive
+      const HEARTBEAT_INTERVAL = 15 * 1000; // 15 seconds
+      const startTime = Date.now();
 
-  // Store timer reference for cleanup
-  server._heartbeatTimer = heartbeatTimer;
+      const heartbeatTimer = setInterval(() => {
+        const uptime = Date.now() - startTime;
+        const uptimeMinutes = Math.floor(uptime / 60000);
+        const uptimeSeconds = Math.floor((uptime % 60000) / 1000);
 
-  console.log(`[Heartbeat] Logger started (interval: ${HEARTBEAT_INTERVAL / 1000}s)\n`);
-});
+        const memUsage = process.memoryUsage();
+        const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+
+        const activeConnections = sessions.size;
+
+        const timestamp = new Date().toISOString();
+        console.log(`[Heartbeat] ${timestamp} | Uptime: ${uptimeMinutes}m ${uptimeSeconds}s | Memory: ${memMB}MB | Active Connections: ${activeConnections}`);
+      }, HEARTBEAT_INTERVAL);
+
+      // Store timer reference for cleanup
+      server._heartbeatTimer = heartbeatTimer;
+
+      console.log(`[Heartbeat] Logger started (interval: ${HEARTBEAT_INTERVAL / 1000}s)\n`);
+    });
+  };
+  tryListen();
+}
 
 // Cleanup heartbeat on server close
 server.on('close', () => {
@@ -2769,5 +2877,7 @@ server.on('close', () => {
     console.log('[Heartbeat] Logger stopped');
   }
 });
+
+startServer();
 
 export { app, server };
