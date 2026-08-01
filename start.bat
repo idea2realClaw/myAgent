@@ -109,55 +109,21 @@ exit /b 0
 echo [INFO] Working directory: %CD%
 
 set "DAEMON_JS=%CD%\backend\daemon.js"
-set "DAEMON_LOG=%CD%\logs\daemon-stdout.log"
-set "DAEMON_ERR=%CD%\logs\daemon-stderr.log"
 
-echo [INFO] Launching daemon (detached, independent of this window)...
-powershell -NoProfile -Command "Start-Process -FilePath '%NODE_PATH%\node.exe' -ArgumentList '%DAEMON_JS%' -WorkingDirectory '%CD%' -WindowStyle Hidden -RedirectStandardOutput '%DAEMON_LOG%' -RedirectStandardError '%DAEMON_ERR%'"
-if errorlevel 1 (
-    echo [ERROR] Failed to launch daemon process
-    pause
-    exit /b 1
-)
-
-echo [INFO] Waiting for daemon to be ready (polling 3737 /api/health)...
-set "READY=0"
-where curl >nul 2>&1
-if errorlevel 1 (
-    echo [WARN] curl not found, waiting 8s then assuming ready...
-    timeout /t 8 /nobreak >nul
-    set "READY=1"
-    goto :started
-)
-for /L %%i in (1,1,25) do (
-    for /f "delims=" %%h in ('curl -s -o nul -m 2 -w "%%{http_code}" "http://127.0.0.1:3737/api/health"') do (
-        if "%%h"=="200" (
-            set "READY=1"
-            goto :started
-        )
-    )
-    timeout /t 1 /nobreak >nul
-)
-
-:started
-if "%READY%"=="1" (
-    echo.
-    echo [INFO] Daemon started.
-    echo [INFO]    URL:     http://localhost:3737
-    echo [INFO]    Control: http://localhost:13737
-    echo [INFO]    Daemon runs in background; closing this window will NOT stop it.
-) else (
-    echo.
-    echo [ERROR] Failed to start Agent WebUI
-    echo [INFO] Last 20 lines of daemon log:
-    powershell -NoProfile -Command "Get-Content '%DAEMON_LOG%' -Tail 20"
-    pause
-    exit /b 1
-)
+echo [INFO] Launching daemon in FOREGROUND (backend logs stream to this window)...
+echo [INFO]    URL:     http://localhost:3737
+echo [INFO]    Control: http://localhost:13737
+echo [INFO]    Press Ctrl+C to stop the agent (closing this window stops it too).
 echo.
+
+"%NODE_PATH%\node.exe" "%DAEMON_JS%"
+set "EXITCODE=%errorlevel%"
+
+echo.
+echo [INFO] Daemon exited with code %EXITCODE%.
 echo [INFO] Press any key to close this window...
 pause
-exit /b 0
+exit /b %EXITCODE%
 
 REM Subroutine: free_port <port>
 REM Finds any process LISTENING on the given port and kills it

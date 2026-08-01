@@ -95,70 +95,45 @@ let isShuttingDown = false;
 let isRestarting = false;
 let restartResolve = null;
 
-// Zero-downtime restart: start new server, wait for health, then stop old
+// Zero-downtime restart: STOP old server first (release port 3737), THEN start
+// new server. Starting the new server while the old one still holds the port
+// causes EADDRINUSE and cascading crashes (multiple servers fighting for the port).
 async function zeroDowntimeRestart() {
   if (isRestarting) {
-    log('Zero-downtime restart already in progress');
+    log('Restart already in progress');
     return false;
   }
 
-  log('Initiating zero-downtime restart...');
+  log('Initiating restart (stop old server, then start new)...');
   isRestarting = true;
 
-  const oldProcess = serverProcess;
-  let newProcess = null;
-
   try {
-    // 1. Start new server process
+    // 1. Stop the old server gracefully so port 3737 is freed
+    if (serverProcess && !isShuttingDown) {
+      log(`Stopping old server (PID: ${serverProcess.pid}) to free port ${CONFIG.port}...`);
+      await stopServerGraceful(serverProcess);
+    }
+
+    // 2. Start the new server (port is now free → no EADDRINUSE)
     log('Starting new server process...');
-    newProcess = spawn('node', [CONFIG.serverJs], {
-      cwd: ROOT_DIR,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-      env: { ...process.env, PORT: String(CONFIG.port), no_proxy: 'localhost,127.0.0.1', NO_PROXY: 'localhost,127.0.0.1' },
-    });
-    newProcess.unref();
+    startServer();
 
-    // Pipe output to log file
-    const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });
-    newProcess.stdout.pipe(logStream, { end: false });
-    newProcess.stderr.pipe(logStream, { end: false });
-
-    log(`New server process started (PID: ${newProcess.pid})`);
-
-    // 2. Wait for new server to be healthy
+    // 3. Wait for the new server to become healthy
     log('Waiting for new server to become healthy...');
-    const healthy = await waitForHealth(newProcess, CONFIG.startupTimeout);
+    const healthy = await waitForHealth(serverProcess, CONFIG.startupTimeout);
 
     if (!healthy) {
       log('New server failed to become healthy, aborting restart', 'error');
-      newProcess.kill('SIGTERM');
       isRestarting = false;
       return false;
     }
 
-    log('New server is healthy, stopping old server...');
-
-    // 3. Stop old server gracefully
-    if (oldProcess && !isShuttingDown) {
-      await stopServerGraceful(oldProcess);
-    }
-
-    // 4. Update serverProcess reference
-    serverProcess = newProcess;
+    log('Restart completed successfully');
     isRestarting = false;
-
-    // 5. Set up exit handler for new process
-    setupExitHandler(newProcess);
-
-    log('Zero-downtime restart completed successfully');
     return true;
 
   } catch (err) {
-    log(`Zero-downtime restart failed: ${err.message}`, 'error');
-    if (newProcess && !newProcess.killed) {
-      newProcess.kill('SIGKILL');
-    }
+    log(`Restart failed: ${err.message}`, 'error');
     isRestarting = false;
     return false;
   }
@@ -274,6 +249,22 @@ function setupExitHandler(process) {
   });
 }
 
+// Pipe a server child's stdout/stderr to BOTH the log file and this process's
+// console, so that when the daemon runs in the foreground the live backend logs
+// are visible in the launching CMD window (not only written to a file).
+function pipeServerOutput(proc) {
+  const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });
+  proc.stdout.on('data', (d) => {
+    logStream.write(d);
+    process.stdout.write(d);
+  });
+  proc.stderr.on('data', (d) => {
+    logStream.write(d);
+    process.stderr.write(d);
+  });
+  proc.on('exit', () => { try { logStream.end(); } catch { /* ignore */ } });
+}
+
 function startServer() {
   log(`Starting server: ${CONFIG.serverJs}`);
 
@@ -285,10 +276,8 @@ function startServer() {
   });
   serverProcess.unref();
 
-  // Pipe output to log file
-  const logStream = fs.createWriteStream(CONFIG.serverLogFile, { flags: 'a' });
-  serverProcess.stdout.pipe(logStream, { end: false });
-  serverProcess.stderr.pipe(logStream, { end: false });
+  // Pipe output to log file AND console
+  pipeServerOutput(serverProcess);
 
   log(`Server process started (PID: ${serverProcess.pid})`);
 

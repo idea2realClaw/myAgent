@@ -218,7 +218,10 @@ const wss = new WebSocketServer({ server });
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(ROOT_DIR, 'frontend', 'dist')));
+app.use(express.static(path.join(ROOT_DIR, 'frontend', 'dist'), {
+  maxAge: 0,
+  setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); },
+}));
 
 // ============================================================
 // Singletons
@@ -2047,7 +2050,12 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   let finalText = '';
   let synthError = null;
   try {
-    finalText = await planSynthesize(llm, question, context, remaining);
+    finalText = (await planSynthesize(llm, question, context, remaining)).trim();
+    // 兜底：汇总偶尔返回空（模型空 completion / 截断），重试一次（缩短上下文避免超长）
+    if (!finalText) {
+      console.log('[PlannedLoop] 汇总首次返回空，重试一次');
+      finalText = (await planSynthesize(llm, question, context.slice(-12000), remaining)).trim();
+    }
   } catch (e) { finalText = ''; synthError = e.message; }
   finalText = identity.filterOutput((finalText || '').trim());
   finalText = enforceToolClaimHonesty(finalText, session.__realToolNames);
@@ -2598,6 +2606,7 @@ async function handleChat(sessionId, session, msg) {
 app.get('*', (req, res) => {
   const indexPath = path.join(ROOT_DIR, 'frontend', 'dist', 'index.html');
   if (fs.existsSync(indexPath)) {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(indexPath);
   } else {
     res.status(404).send('Frontend not built yet.');
