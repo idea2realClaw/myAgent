@@ -2015,12 +2015,20 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
     }
 
     // 自检：结果是否回答了原问题
+    // 作为「可见阶段项」推送到 ChatStream（与任务分解同样的卡片+打勾语义），
+    // 避免这段耗时的 LLM 调用期间界面上看不出正在执行任务。
     if (session.stopRequested) break;
+    const checkStageId = `stage_check_${iter}`;
+    const checkStageTitle = iter === 1 ? '自检：结果是否已回答原问题' : `自检（第 ${iter} 轮）：结果是否已回答原问题`;
+    broadcast(ws, { type: 'plan_append', task: { id: checkStageId, title: checkStageTitle, type: 'analysis' } });
+    broadcast(ws, { type: 'subtask_start', taskId: checkStageId, title: checkStageTitle });
     broadcast(ws, { type: 'thinking', message: '🔎 自检：结果是否回答了问题...' });
+    console.log(`[PlannedLoop] 阶段开始: ${checkStageTitle}`);
     let check = { satisfied: true, missing: [] };
     try {
       check = await planSelfCheck(llm, question, context);
     } catch (e) { check = { satisfied: true, missing: [] }; }
+    broadcast(ws, { type: 'subtask_done', taskId: checkStageId, title: checkStageTitle });
     console.log(`[PlannedLoop] 自检: satisfied=${check.satisfied} missing=${JSON.stringify(check.missing)} reason=${check.reason || ''}`);
     if (check.satisfied) { remaining = []; break; }
     remaining = check.missing || [];
@@ -2028,14 +2036,24 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   }
 
   // 汇总最终答案（含遗留问题）
-  broadcast(ws, { type: 'thinking', message: '✨ 汇总最终答案...' });
+  // 同样作为「可见阶段项」推送到 ChatStream：汇总是一次完整的 LLM 调用，耗时较长，
+  // 只发 thinking 状态条会被 tool_result 等事件的 removeStatus 覆盖掉，用户看不出在执行任务。
+  const synthStageId = 'stage_synthesize';
+  const synthStageTitle = '汇总最终答案（依据检索到的资料回答原问题）';
+  broadcast(ws, { type: 'plan_append', task: { id: synthStageId, title: synthStageTitle, type: 'summary' } });
+  broadcast(ws, { type: 'subtask_start', taskId: synthStageId, title: synthStageTitle });
+  broadcast(ws, { type: 'thinking', message: '✨ 正在汇总最终答案...' });
+  console.log(`[PlannedLoop] 阶段开始: 汇总最终答案 (上下文长度=${context.length} 遗留=${remaining.length})`);
   let finalText = '';
+  let synthError = null;
   try {
     finalText = await planSynthesize(llm, question, context, remaining);
-  } catch (e) { finalText = ''; }
+  } catch (e) { finalText = ''; synthError = e.message; }
   finalText = identity.filterOutput((finalText || '').trim());
   finalText = enforceToolClaimHonesty(finalText, session.__realToolNames);
-  console.log(`[PlannedLoop] 汇总完成: 答案长度=${finalText.length} 本轮真实工具=${[...session.__realToolNames].join(',') || '(无)'}`);
+  if (synthError) broadcast(ws, { type: 'subtask_error', taskId: synthStageId, title: synthStageTitle, message: synthError });
+  else broadcast(ws, { type: 'subtask_done', taskId: synthStageId, title: synthStageTitle });
+  console.log(`[PlannedLoop] 汇总完成: 答案长度=${finalText.length}${synthError ? ' 错误=' + synthError : ''} 本轮真实工具=${[...session.__realToolNames].join(',') || '(无)'}`);
   if (!finalText) {
     finalText = context.trim() || '抱歉，本轮未能获取有效结果，请重试或更换模型。';
     if (remaining.length) finalText += `\n\n⚠️ 遗留问题：\n- ${remaining.join('\n- ')}`;

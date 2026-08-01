@@ -1,4 +1,5 @@
 @echo off
+title MyAgent
 chcp 65001 >nul
 echo ============================================================
 echo          Agent WebUI - Windows Launcher

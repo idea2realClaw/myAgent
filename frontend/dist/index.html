@@ -1967,6 +1967,14 @@ function handleMessage(msg) {
     renderPlanCard(msg.plan);
   }
 
+  // 执行阶段项（自检 / 汇总最终答案等）：追加到任务分解卡片里，
+  // 让分解之外的耗时阶段在聊天流中同样可见、可打勾。
+  else if (type === 'plan_append') {
+    showStatus(`⏳ ${msg.task?.title || '执行中'}...`, 'thinking');
+    appendPlanSubtask(msg.task);
+    appendLog('info', `📌 新增执行阶段: ${msg.task?.title || msg.task?.id || ''}`);
+  }
+
   else if (type === 'subtask_panel') {
     renderSubtaskPanel(msg.taskId, msg.title, msg.instruction, msg.command);
   }
@@ -2412,6 +2420,48 @@ function renderPlanCard(plan) {
     subtaskCards[t.id] = document.getElementById(`stcard-${t.id}`);
   });
 
+  scrollToBottom();
+}
+
+// 在已有的任务分解卡片上追加一个执行阶段项（如「自检」「汇总最终答案」）。
+// 若当前没有分解卡片（例如未分解直接汇总），则新建一张「执行进度」卡片兜底，
+// 保证这些阶段在 ChatStream 里始终可见，并能被 subtask_start/done 打勾。
+function appendPlanSubtask(task) {
+  if (!task || !task.id) return;
+  if (subtaskCards[task.id] || document.getElementById(`stcard-${task.id}`)) return; // 幂等，避免重复追加
+
+  if (!currentPlanCard || !currentPlanCard.isConnected) {
+    renderPlanCard({
+      title: '执行进度',
+      subtaskCount: 1,
+      subtasks: [{ id: task.id, title: task.title || '', type: task.type || 'general' }],
+    });
+    return;
+  }
+
+  const grid = currentPlanCard.querySelector('.subtasks-grid');
+  if (!grid) return;
+
+  const icons = { research: '🔍', analysis: '📊', generation: '✍️', code: '💻', summary: '📝', general: '⚡' };
+  const el = document.createElement('div');
+  el.className = 'subtask-card pending';
+  el.id = `stcard-${task.id}`;
+  el.innerHTML = `
+    <div class="subtask-header">
+      <span class="subtask-icon">${icons[task.type] || '⚡'}</span>
+      <span class="subtask-name">${escapeHtml(task.title || '')}</span>
+      <span class="subtask-status pending">pending</span>
+    </div>
+    <div class="subtask-progress"><div class="subtask-progress-bar" id="stbar-${task.id}"></div></div>
+  `;
+  grid.appendChild(el);
+  subtaskCards[task.id] = el;
+
+  const badge = currentPlanCard.querySelector('.plan-title .badge');
+  if (badge) {
+    const n = grid.querySelectorAll('.subtask-card').length;
+    badge.textContent = `${n} subtask${n > 1 ? 's' : ''}`;
+  }
   scrollToBottom();
 }
 
