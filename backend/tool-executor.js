@@ -10,6 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import registry from './tool-registry.js';
+import { decodeShell } from './shell-decode.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,9 +33,7 @@ function sanitizePath(rawPath) {
 
 export async function* execStream({ command, workdir, signal }) {
   const cwd = workdir ? sanitizePath(workdir) : WORKSPACE_ROOT;
-  
-  let stdoutBuffer = '';
-  let stderrBuffer = '';
+
   let resolved = false;
   let resolvePromise;
   const promise = new Promise(resolve => { resolvePromise = resolve; });
@@ -52,9 +51,12 @@ export async function* execStream({ command, workdir, signal }) {
     });
   }
 
+  // Collect raw buffers (NOT strings) so multi-byte chars are never split across chunks.
+  const stdoutChunks = [];
+  const stderrChunks = [];
+
   child.stdout.on('data', (chunk) => {
-    const text = chunk.toString();
-    stdoutBuffer += text;
+    stdoutChunks.push(Buffer.from(chunk));
     // Yield each chunk as it arrives
     if (!resolved) {
       // Can't yield from event callback, collect and yield in loop
@@ -62,16 +64,15 @@ export async function* execStream({ command, workdir, signal }) {
   });
 
   child.stderr.on('data', (chunk) => {
-    const text = chunk.toString();
-    stderrBuffer += text;
+    stderrChunks.push(Buffer.from(chunk));
   });
 
   child.on('close', (code) => {
     resolved = true;
     resolvePromise({
       success: code === 0,
-      stdout: stdoutBuffer,
-      stderr: stderrBuffer,
+      stdout: decodeShell(Buffer.concat(stdoutChunks)),
+      stderr: decodeShell(Buffer.concat(stderrChunks)),
       exitCode: code,
     });
   });
@@ -80,8 +81,8 @@ export async function* execStream({ command, workdir, signal }) {
     resolved = true;
     resolvePromise({
       success: false,
-      stdout: stdoutBuffer,
-      stderr: stderrBuffer,
+      stdout: decodeShell(Buffer.concat(stdoutChunks)),
+      stderr: decodeShell(Buffer.concat(stderrChunks)),
       exitCode: -1,
       error: err.message,
     });

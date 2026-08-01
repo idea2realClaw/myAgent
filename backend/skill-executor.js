@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { decodeShell } from './shell-decode.js';
 
 const execAsync = promisify(exec);
 
@@ -134,13 +135,14 @@ export class SkillExecutor {
       const { stdout, stderr } = await execAsync(fullCmd, {
         maxBuffer: 10 * 1024 * 1024, // 10MB
         timeout: 120000, // 2 分钟
+        encoding: 'buffer', // capture raw bytes; decode with correct code page
       });
-      if (stderr) {
-        console.warn(`[SkillExecutor] ${skillName} stderr:`, stderr);
+      if (stderr && stderr.length) {
+        console.warn(`[SkillExecutor] ${skillName} stderr:`, decodeShell(stderr));
       }
       return {
         success: true,
-        output: stdout || '',
+        output: decodeShell(stdout) || '',
         skillName,
       };
     } catch (err) {

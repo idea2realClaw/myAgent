@@ -11,6 +11,7 @@ import { minimatch } from 'minimatch';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { load } from 'cheerio';
+import { decodeShell } from './shell-decode.js';
 
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -191,16 +192,17 @@ class ToolRegistry {
             timeout: 30000,
             maxbuffer: 1024 * 1024 * 5,
             shell: true,
+            encoding: 'buffer', // capture raw bytes; decode with correct code page
           });
           return {
-            stdout: stdout || '',
-            stderr: stderr || '',
+            stdout: decodeShell(stdout),
+            stderr: decodeShell(stderr),
             exitCode: 0,
           };
         } catch (err) {
           return {
-            stdout: err.stdout || '',
-            stderr: err.stderr || '',
+            stdout: decodeShell(err.stdout),
+            stderr: decodeShell(err.stderr),
             exitCode: err.code || -1,
             error: err.message,
           };
@@ -529,9 +531,9 @@ class ToolRegistry {
           const result = execSync(`"${pythonCmd}" ${tmpFile} ${args}`, {
             timeout: 30000,
             maxBuffer: 1024 * 1024,
-            encoding: 'utf8',
+            encoding: 'buffer', // capture raw bytes; decode with correct code page
           });
-          return { stdout: result.trim() };
+          return { stdout: decodeShell(result).trim() };
         } finally {
           try { fsSync.unlinkSync(tmpFile); } catch {}
         }
