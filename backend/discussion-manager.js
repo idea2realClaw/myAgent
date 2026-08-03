@@ -117,6 +117,43 @@ async function selectSpeakingOrder(llm, roster, topic, transcript) {
  *   config      - 运行配置（可选，目前仅透传 max_rounds 覆盖）
  *   broadcast   - (data:object) => void  把结构化帧推给客户端
  */
+
+// ── 收敛检测（移植自 qai-appbuilder 的 convergence controller 思想）────────────
+// 多 Agent 讨论若已达成一致或陷入重复，应提前结束，避免无限辩论、浪费调用。
+// 触发条件：① 近几轮发言两两高度相似（Jaccard ≥ 0.62）；② 出现"同意/一致/达成共识"等信号。
+// 为避免过早收敛，仅在第 2 轮之后才允许提前终止。
+function normalizeText(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+function _tokens(s) {
+  return new Set(normalizeText(s).split(/[\s,，。、;；.]+/).filter((w) => w.length > 1));
+}
+function _jaccard(a, b) {
+  const A = _tokens(a);
+  const B = _tokens(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+export function detectConvergence(transcript, round, maxRounds) {
+  if (round < 2 || (maxRounds && maxRounds <= 2)) return { converged: false };
+  const recent = (transcript || []).slice(-4);
+  if (recent.length < 3) return { converged: false };
+
+  const sims = [];
+  for (let i = 1; i < recent.length; i++) sims.push(_jaccard(recent[i].text, recent[i - 1].text));
+  const avgSim = sims.reduce((a, b) => a + b, 0) / sims.length;
+  if (avgSim >= 0.62)
+    return { converged: true, reason: `近 ${recent.length} 轮发言高度重复（平均相似度 ${avgSim.toFixed(2)}），判定已收敛` };
+
+  const joined = recent.map((r) => r.text).join(' ');
+  if (/(同意|一致|达成共识|没异议|无新意见|不再有新的|concur|agree|consensus|no new)/i.test(joined))
+    return { converged: true, reason: '检测到一致/同意信号' };
+
+  return { converged: false };
+}
+
 export async function runDiscussion({ ws, session, llm, topic, roster, mode, config = {}, broadcast }) {
   const send = (data) => {
     try {
@@ -209,6 +246,14 @@ export async function runDiscussion({ ws, session, llm, topic, roster, mode, con
       text = text.trim();
       send({ type: 'discussion_speaker_end', turnId, discussionId, round, speakerIndex: idx, content: text });
       if (text) transcript.push({ speaker: speakerName, text, index: idx, round });
+    }
+
+    // ── 收敛检测：达成收敛则提前结束，避免无限辩论 ──
+    const conv = detectConvergence(transcript, round, maxRounds);
+    if (conv.converged) {
+      console.log(`[Discussion] 第 ${round} 轮检测到收敛，提前结束：${conv.reason}`);
+      send({ type: 'discussion_convergence_early', round, discussionId, reason: conv.reason });
+      break;
     }
 
     if (stop()) {

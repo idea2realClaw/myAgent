@@ -19,6 +19,7 @@ tmp_*.mjs
 
 # runtime session data (regenerated at runtime)
 data/subagent-sessions.json
+data/experiences.json
 
 # skill 内部噪音与超大二进制(本地保留、不入库)
 skills/**/.codebuddy/

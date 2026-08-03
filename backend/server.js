@@ -32,6 +32,9 @@ import { AgentTemplateStore } from './agent-template-store.js';
 import { RosterTemplateStore } from './roster-template-store.js';
 import { ModeTemplateStore } from './mode-template-store.js';
 import { runDiscussion } from './discussion-manager.js';
+import { experienceStore } from './experience-store.js';
+import { GuardrailController } from './guardrail.js';
+import { compressWireIfNeeded } from './context-compressor.js';
 import { truncateToolResult, estimateWireTokens } from './context-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 import { PermissionManager } from './permission-manager.js';
@@ -1896,6 +1899,8 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
   const toolSchemas = getAllOpenAIToolSchemas();
   const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
   const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas);
+  // 护栏：本子任务执行期间的「防卡死」状态机
+  const guardrail = new GuardrailController();
   const buildToolMetas = (rawToolCalls, roundNo) =>
     rawToolCalls.map((tc, i) => {
       const name = tc.name || (tc.function && tc.function.name) || 'unknown';
@@ -1906,7 +1911,24 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
 
   // 单次执行：返回 { content, executedTools, error }
   async function runOnce(wire) {
-    const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
+    const baseExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
+    // 护栏包裹：执行前 preCheck（同参重复/连续失败 → WARN/BLOCK），执行后 record 更新尾部状态。
+    // 必须是 async generator：内核用 `for await ... of toolExecutor(...)` 逐个消费工具结果，
+    // 写成返回数组的普通 async 函数会直接让整条工具链路失效（not async iterable）。
+    const toolExecutor = async function* (roundNo, toolMetas) {
+      for (const [name, args] of toolMetas) {
+        const v = guardrail.preCheck(name, args);
+        if (v.decision === 'BLOCK')
+          throw new Error(`[guardrail] 检测到无效重复/失败重试 (${v.reason})，已中止本轮工具调用以防卡死`);
+        else if (v.decision === 'WARN')
+          broadcast(ws, { type: 'thinking', message: `⚠️ 护栏提醒: ${v.reason}` });
+      }
+      for await (const r of baseExecutor(roundNo, toolMetas)) {
+        const meta = toolMetas.find((m) => m[2] === r.callId);
+        guardrail.record(r.toolName, meta ? meta[1] : {}, r.ok, r.resultText);
+        yield r; // 逐个产出，保持流式（不要先收集成数组）
+      }
+    };
     const executedTools = [];
     const toolResultsText = [];
     try {
@@ -1942,7 +1964,14 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
     return { content: modelText, evidence, executedTools };
   }
 
-  let res = await runOnce([...wireMessages]);
+  // 长上下文压缩：wire 超阈值时把早期历史压成摘要，避免上下文溢出
+  let wireToRun = wireMessages;
+  try {
+    wireToRun = await compressWireIfNeeded(llm, wireMessages, { threshold: 5000, keepRecent: 6 });
+  } catch (e) {
+    console.warn('[SubtaskKernel] compress failed, skip:', e.message);
+  }
+  let res = await runOnce([...wireToRun]);
   console.log(`[SubtaskKernel] 首次执行: 工具=[${res.executedTools.map((t) => t.title).join(', ') || '无'}]${res.error ? ' 错误=' + res.error : ''}`);
 
   // 强制联网重试：子任务需联网但模型退化没调任何工具 → 再跑一次并强制调用 web_search
@@ -1969,6 +1998,19 @@ function isResearchQuestion(q) {
 // 主编排：规划 → 执行(打勾) → 自检 → 循环 → 汇总+遗留
 async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   const question = history[history.length - 1]?.content || '';
+
+  // ── 经验召回：相似任务的历史经验注入 system（让 Agent 越用越聪明）──
+  let systemForRun = system;
+  try {
+    const expBlock = experienceStore.recallBlock(question);
+    if (expBlock) {
+      systemForRun = `${system}\n\n${expBlock}`;
+      console.log(`[PlannedLoop] 召回 ${experienceStore.search(question, 5).length} 条历史经验注入 system`);
+    }
+  } catch (e) {
+    console.warn('[PlannedLoop] experience recall failed:', e.message);
+  }
+
   const research = isResearchQuestion(question);
   console.log(`[PlannedLoop] 原始问题: ${question}`);
   console.log(`[PlannedLoop] 研究型问题(需多次联网检索): ${research}`);
@@ -2005,7 +2047,7 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
       broadcast(ws, { type: 'subtask_start', taskId: item.id, title: item.title });
       console.log(`[PlannedLoop] 子任务[${item.id}] 开始: ${item.title}`);
       const wire = [
-        { role: 'system', content: system },
+        { role: 'system', content: systemForRun },
         ...history.slice(-6),
         {
           role: 'user',
@@ -2090,6 +2132,12 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
 
   history.push({ role: 'assistant', content: finalText });
   broadcast(ws, { type: 'done', content: finalText, subtasks: allExecuted });
+
+  // ── 经验提炼（成功完成 → fire-and-forget，不阻塞回复）──
+  experienceStore
+    .extract(llm, context, question, { roundIndex: config.maxPlanIterations || 3, toolsRan: allExecuted })
+    .catch((e) => console.warn('[PlannedLoop] experience extract error:', e.message));
+
   return { content: finalText };
 }
 
@@ -2697,14 +2745,28 @@ function selfRestart() {
   if (isRestarting) return;
   isRestarting = true;
   console.log('\n[Restart] Self-restart: handing off to new instance...');
+  // detached: true is REQUIRED. With detached:false the new instance stays tied to
+  // this process's lifetime, so when the old instance exits after a successful
+  // handoff it drags the new instance down with it; the old process then sees
+  // child 'exit', reclaims the port, and keeps serving STALE code — a restart that
+  // silently does nothing. unref() lets the old process exit independently.
   const child = spawn(process.execPath, process.argv.slice(1), {
     cwd: process.cwd(),
     env: process.env,
     stdio: 'inherit',
-    detached: false,
+    detached: true,
   });
+  child.unref();
   let done = false; // true once old has either exited (handoff) or reclaimed the port
-  const finishOld = () => { if (done) return; done = true; process.exit(0); };
+  const finishOld = () => {
+    if (done) return;
+    done = true;
+    // Stop watching the new instance: it is independent now, and any late 'exit'
+    // signal must not trigger reclaim() while we are on our way out.
+    child.removeAllListeners('exit');
+    child.removeAllListeners('error');
+    process.exit(0);
+  };
   const reclaim = () => {
     if (done) return;
     done = true;

@@ -6,51 +6,165 @@
   <title>MyAgent</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     /* ── Reset & Base ───────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0d0d0f;
-      --bg2: #141416;
-      --bg3: #1a1a1e;
-      --bg4: #222228;
-      --border: #2a2a32;
-      --accent: #7c6af7;
-      --accent2: #a78bfa;
-      --green: #34d399;
+      /* ── Surface 层级 (深色空蓝黑 — 取自 qai-appbuilder design tokens) ── */
+      --bg:        #0c0e14;
+      --bg2:       #14161e;
+      --bg3:       #1a1e2b;
+      --bg4:       #232838;
+      --hover:     #272b3d;
+      --input:     #1a1e2b;
+
+      /* ── Border ── */
+      --border:        #2a3050;
+      --border-light:  #3a4468;
+
+      /* ── Accent (MyAgent 紫色主色, 保留) ── */
+      --accent:        #7c6af7;
+      --accent2:       #a78bfa;
+      --accent-hover:  #9488ff;
+      --accent-light:  rgba(124,106,247,0.18);
+      --accent-muted:  rgba(124,106,247,0.10);
+      --accent-glow:   rgba(124,106,247,0.30);
+
+      /* ── Status ── */
+      --green:  #34d399;
       --yellow: #fbbf24;
-      --red: #f87171;
-      --blue: #60a5fa;
-      --text: #e8e8f0;
-      --text2: #9898a8;
-      --text3: #5a5a6a;
-      --radius: 12px;
-      --radius-sm: 8px;
-      --shadow: 0 4px 24px rgba(0,0,0,0.4);
-      --font-size: 1.125rem;
+      --red:    #f87171;
+      --blue:   #60a5fa;
+      --info:   #60a5fa;
+
+      /* ── Text ── */
+      --text:  #f0f2f8;
+      --text2: #9ba3c0;
+      --text3: #6b7394;
+
+      /* ── Code / Log Surface ── */
+      --code-bg:    #0d1117;
+      --code-text:  #c9d1d9;
+
+      /* ── Banner / Alert ── */
+      --banner-info-bg:      rgba(96,165,250,0.10);
+      --banner-info-border:  rgba(96,165,250,0.30);
+      --banner-info-text:    var(--blue);
+      --banner-warn-bg:      rgba(251,191,36,0.10);
+      --banner-warn-border:  rgba(251,191,36,0.30);
+      --banner-warn-text:    #fbbf24;
+      --banner-error-bg:     rgba(248,113,113,0.08);
+      --banner-error-border: rgba(248,113,113,0.30);
+      --banner-error-text:   var(--red);
+
+      /* ── Chat Bubble ── */
+      --user-bubble: var(--accent);
+      --user-text:   #ffffff;
+      --ai-bubble:   var(--bg3);
+      --ai-text:     var(--text);
+
+      /* ── Typography ── */
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+      --text-xs:   11px;
+      --text-sm:   12px;
+      --text-base: 13px;
+      --text-md:   14px;
+      --text-lg:   16px;
+      --text-xl:   20px;
+      --text-2xl:  24px;
+      --leading-tight:   1.4;
+      --leading-normal:  1.6;
+      --leading-relaxed: 1.7;
+
+      /* ── Spacing (8px 基线网格) ── */
+      --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+      --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px; --space-12: 48px;
+
+      /* ── Radius ── */
+      --radius-xs: 4px; --radius-sm: 8px; --radius: 12px;
+      --radius-lg: 16px; --radius-xl: 20px; --radius-full: 9999px;
+
+      /* ── Shadow ── */
+      --shadow-sm:  0 1px 3px rgba(0,0,0,0.30);
+      --shadow-md:  0 4px 16px rgba(0,0,0,0.35);
+      --shadow-lg:  0 12px 48px rgba(0,0,0,0.45);
+      --shadow-glow: 0 0 0 3px var(--accent-muted);
+
+      /* ── Motion ── */
+      --duration-fast: 150ms; --duration-normal: 200ms; --duration-slow: 350ms;
+      --ease-out: cubic-bezier(0.16,1,0.3,1); --ease-in-out: cubic-bezier(0.4,0,0.2,1);
+      --transition: var(--duration-normal) var(--ease-out);
+
+      /* ── Gradient / Glass / Focus ── */
+      --gradient-brand: linear-gradient(135deg, #7c6af7 0%, #60a5fa 100%);
+      --glass-bg:      rgba(20,22,30,0.85);
+      --glass-border:  rgba(255,255,255,0.06);
+      --glass-blur:    12px;
+      --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+      /* ── 多 Agent 讨论 8 色发言者调色板 ── */
+      --discussion-speaker-0: #7c6af7;
+      --discussion-speaker-1: #34d399;
+      --discussion-speaker-2: #f59e0b;
+      --discussion-speaker-3: #60a5fa;
+      --discussion-speaker-4: #f472b6;
+      --discussion-speaker-5: #22d3ee;
+      --discussion-speaker-6: #a78bfa;
+      --discussion-speaker-7: #fb7185;
+
+      --font-size: 1.125rem; /* 兼容旧引用 */
     }
 
     [data-theme="light"] {
-      --bg: #ffffff;
-      --bg2: #f5f5f7;
-      --bg3: #eeeeee;
-      --bg4: #e0e0e0;
-      --border: #d0d0d0;
-      --accent: #7c6af7;
-      --accent2: #6d5ce0;
-      --green: #10b981;
-      --yellow: #f59e0b;
-      --red: #ef4444;
-      --blue: #3b82f6;
-      --text: #1a1a2e;
-      --text2: #6b6b80;
-      --text3: #a0a0b0;
-      --shadow: 0 4px 24px rgba(0,0,0,0.1);
+      --bg:    #f8f9fc;
+      --bg2:   #ffffff;
+      --bg3:   #f1f3f9;
+      --bg4:   #e6eaf3;
+      --hover: #e8ecf4;
+      --input: #ffffff;
+      --border:       #dde1f0;
+      --border-light: #c8cde8;
+      --accent:        #5b4edb;
+      --accent2:       #6d5ce0;
+      --accent-hover:  #4a3dc8;
+      --accent-light:  rgba(91,78,219,0.12);
+      --accent-muted:  rgba(91,78,219,0.08);
+      --accent-glow:   rgba(91,78,219,0.20);
+      --green:  #059669;
+      --yellow: #d97706;
+      --red:    #ef4444;
+      --blue:   #2563eb;
+      --info:   #2563eb;
+      --text:  #1a1f36;
+      --text2: #4a5578;
+      --text3: #7a84a0;
+      --code-bg:   #f6f8fa;
+      --code-text: #24292f;
+      --banner-info-text: #1e40af;
+      --banner-warn-text: #92400e;
+      --ai-bubble: #ffffff;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+      --shadow-lg: 0 12px 48px rgba(0,0,0,0.12);
+      --gradient-brand: linear-gradient(135deg, #5b4edb 0%, #3b82f6 100%);
+      --glass-bg:      rgba(255,255,255,0.90);
+      --glass-border:  rgba(0,0,0,0.05);
+      --discussion-speaker-0: #5b4edb;
+      --discussion-speaker-1: #059669;
+      --discussion-speaker-2: #d97706;
+      --discussion-speaker-3: #2563eb;
+      --discussion-speaker-4: #db2777;
+      --discussion-speaker-5: #0891b2;
+      --discussion-speaker-6: #7c3aed;
+      --discussion-speaker-7: #e11d48;
     }
 
     html, body {
-      height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: var(--bg); color: var(--text); line-height: 1.6;
+      height: 100%; font-family: var(--font-sans);
+      background: var(--bg); color: var(--text); line-height: var(--leading-normal);
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
     }
 
     /* ── Layout ─────────────────────────────────────────── */
@@ -407,78 +521,86 @@
     }
 
     /* ── Message bubbles ─────────────────────────────────── */
-    .message { display: flex; gap: 12px; max-width: 900px; width: 100%; }
+    .message { display: flex; gap: var(--space-3); max-width: 900px; width: 100%; }
     .message.user { flex-direction: row-reverse; align-self: flex-end; }
     .message.assistant { align-self: flex-start; }
 
     .avatar {
-      width: 34px; height: 34px; border-radius: 50%;
+      width: 36px; height: 36px; border-radius: var(--radius-full);
       display: flex; align-items: center; justify-content: center;
       font-size: 0.875rem; flex-shrink: 0; font-weight: 700;
+      box-shadow: var(--shadow-sm); font-family: var(--font-sans);
     }
-    .message.user .avatar { background: var(--accent); color: #fff; }
-    .message.assistant .avatar { background: var(--bg4); color: var(--accent2); border: 1px solid var(--border); }
+    .message.user .avatar {
+      background: var(--gradient-brand); color: #fff;
+    }
+    .message.assistant .avatar {
+      background: var(--bg4); color: var(--accent2);
+      border: 1px solid var(--border-light);
+    }
 
     .bubble {
-      padding: 12px 16px; border-radius: var(--radius);
-      max-width: calc(100% - 46px);
+      padding: var(--space-3) var(--space-4); border-radius: var(--radius);
+      max-width: calc(100% - 48px); line-height: var(--leading-relaxed);
+      box-shadow: var(--shadow-sm);
     }
     .message.user .bubble {
-      background: var(--accent); color: #fff; border-bottom-right-radius: 4px;
+      background: var(--accent); color: var(--user-text);
+      border-bottom-right-radius: var(--radius-xs);
     }
     .message.assistant .bubble {
-      background: var(--bg2); border: 1px solid var(--border);
-      border-bottom-left-radius: 4px;
+      background: var(--ai-bubble); border: 1px solid var(--border);
+      border-bottom-left-radius: var(--radius-xs);
     }
 
     /* ── Task plan panel ─────────────────────────────────── */
     .plan-card {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 16px; width: 100%; max-width: 900px;
-      align-self: flex-start;
+      border-radius: var(--radius); padding: var(--space-4); width: 100%; max-width: 900px;
+      align-self: flex-start; box-shadow: var(--shadow-md);
     }
     .plan-card .plan-title {
-      font-size: 0.8125rem; font-weight: 700; color: var(--accent2); margin-bottom: 12px;
-      display: flex; align-items: center; gap: 8px;
+      font-size: var(--text-md); font-weight: 700; color: var(--accent2); margin-bottom: var(--space-3);
+      display: flex; align-items: center; gap: var(--space-2);
     }
     .plan-card .plan-title .badge {
-      background: var(--accent); color: #fff; border-radius: 20px;
-      padding: 2px 8px; font-size: 0.6875rem;
+      background: var(--accent); color: #fff; border-radius: var(--radius-full);
+      padding: 2px 10px; font-size: var(--text-xs);
     }
 
     .subtasks-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 8px;
+      gap: var(--space-2);
     }
     .subtask-card {
-      padding: 10px 12px; border-radius: var(--radius-sm);
+      padding: var(--space-3); border-radius: var(--radius-sm);
       background: var(--bg3); border: 1px solid var(--border);
-      transition: all 0.2s;
+      transition: all var(--transition);
     }
-    .subtask-card.running { border-color: var(--accent); background: #1e1a35; }
-    .subtask-card.done { border-color: var(--green); }
-    .subtask-card.error { border-color: var(--red); }
+    .subtask-card.running { border-color: var(--accent); background: var(--accent-muted); }
+    .subtask-card.done { border-color: var(--green); background: rgba(52,211,153,0.08); }
+    .subtask-card.error { border-color: var(--red); background: rgba(248,113,113,0.08); }
 
     .subtask-header {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+      display: flex; align-items: center; gap: var(--space-2); margin-bottom: 6px;
     }
-    .subtask-icon { font-size: 0.875rem; }
-    .subtask-name { font-size: 0.75rem; font-weight: 600; color: var(--text); }
+    .subtask-icon { font-size: var(--text-md); }
+    .subtask-name { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
     .subtask-status {
-      font-size: 0.625rem; padding: 2px 6px; border-radius: 10px;
+      font-size: 10px; padding: 2px 7px; border-radius: var(--radius-full);
       margin-left: auto; font-weight: 600;
     }
     .subtask-status.pending { background: var(--bg4); color: var(--text3); }
-    .subtask-status.running { background: #2a1f5a; color: var(--accent2); }
-    .subtask-status.done { background: #0f2e1f; color: var(--green); }
-    .subtask-status.error { background: #2e0f0f; color: var(--red); }
+    .subtask-status.running { background: rgba(124,106,247,0.22); color: var(--accent2); }
+    .subtask-status.done { background: rgba(52,211,153,0.16); color: var(--green); }
+    .subtask-status.error { background: rgba(248,113,113,0.16); color: var(--red); }
 
     .subtask-progress {
-      height: 2px; background: var(--bg4); border-radius: 2px; overflow: hidden;
+      height: 3px; background: var(--bg4); border-radius: var(--radius-full); overflow: hidden; margin-top: var(--space-2);
     }
     .subtask-progress-bar {
-      height: 100%; background: var(--accent); border-radius: 2px;
-      width: 0%; transition: width 0.3s;
+      height: 100%; background: var(--accent); border-radius: var(--radius-full);
+      width: 0%; transition: width var(--duration-slow) var(--ease-out);
       animation: progress-pulse 1.5s infinite;
     }
     .subtask-card.done .subtask-progress-bar { width: 100%; background: var(--green); animation: none; }
@@ -491,12 +613,15 @@
 
     /* ── Status bar ──────────────────────────────────────── */
     .status-bar {
-      padding: 8px 16px; background: var(--bg3); border-radius: var(--radius-sm);
-      font-size: 0.75rem; color: var(--text2); border-left: 3px solid var(--accent);
+      padding: var(--space-2) var(--space-4); background: var(--bg3);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-size: var(--text-sm); color: var(--text2);
+      border-left: 3px solid var(--accent);
       align-self: flex-start; max-width: 900px; width: 100%;
+      display: flex; align-items: center; gap: var(--space-2);
     }
-    .status-bar.synthesizing { border-color: var(--yellow); }
-    .status-bar.error { border-color: var(--red); color: var(--red); }
+    .status-bar.synthesizing { border-left-color: var(--yellow); }
+    .status-bar.error { border-left-color: var(--red); color: var(--red); }
 
     /* ── Markdown rendering ──────────────────────────────── */
     .md-content { font-size: 0.875rem; line-height: 1.7; }
@@ -716,15 +841,15 @@
     margin-left: auto;
   }
   .subtask-panel-status.running {
-    background: #2a1f5a;
+    background: rgba(124,106,247,0.22);
     color: var(--accent2);
   }
   .subtask-panel-status.done {
-    background: #0f2e1f;
+    background: rgba(52,211,153,0.16);
     color: var(--green);
   }
   .subtask-panel-status.error {
-    background: #2e0f0f;
+    background: rgba(248,113,113,0.16);
     color: var(--red);
   }
   .subtask-panel-section {
@@ -768,6 +893,7 @@
 
   /* ── Log Panel ──────────────────────────────── */
   #log-panel {
+    display: none; /* 隐藏日志窗口 */
     position: fixed;
     bottom: 0;
     left: 0;
@@ -1026,6 +1152,22 @@
     background: var(--bg2);
     overflow: hidden;
   }
+  .discussion-converged-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+    color: var(--text2);
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.22);
+    border-left: 3px solid var(--green);
+    border-radius: var(--radius-sm);
+  }
+  .discussion-converged-notice b { color: var(--green); font-weight: 600; }
+  .discussion-converged-icon { flex-shrink: 0; }
   .discussion-round-header {
     padding: 6px 12px;
     font-size: 0.75rem;
@@ -1060,6 +1202,32 @@
   .discussion-speaker.convergence {
     background: linear-gradient(90deg, rgba(120,120,255,0.08), transparent);
   }
+  /* ── 多 Agent 讨论 8 色发言者调色板 (取自 qai-appbuilder design tokens) ── */
+  .discussion-speaker[data-speaker="0"] .discussion-speaker-dot { background: var(--discussion-speaker-0); }
+  .discussion-speaker[data-speaker="1"] .discussion-speaker-dot { background: var(--discussion-speaker-1); }
+  .discussion-speaker[data-speaker="2"] .discussion-speaker-dot { background: var(--discussion-speaker-2); }
+  .discussion-speaker[data-speaker="3"] .discussion-speaker-dot { background: var(--discussion-speaker-3); }
+  .discussion-speaker[data-speaker="4"] .discussion-speaker-dot { background: var(--discussion-speaker-4); }
+  .discussion-speaker[data-speaker="5"] .discussion-speaker-dot { background: var(--discussion-speaker-5); }
+  .discussion-speaker[data-speaker="6"] .discussion-speaker-dot { background: var(--discussion-speaker-6); }
+  .discussion-speaker[data-speaker="7"] .discussion-speaker-dot { background: var(--discussion-speaker-7); }
+  .discussion-speaker[data-speaker="0"] .discussion-speaker-header { color: var(--discussion-speaker-0); }
+  .discussion-speaker[data-speaker="1"] .discussion-speaker-header { color: var(--discussion-speaker-1); }
+  .discussion-speaker[data-speaker="2"] .discussion-speaker-header { color: var(--discussion-speaker-2); }
+  .discussion-speaker[data-speaker="3"] .discussion-speaker-header { color: var(--discussion-speaker-3); }
+  .discussion-speaker[data-speaker="4"] .discussion-speaker-header { color: var(--discussion-speaker-4); }
+  .discussion-speaker[data-speaker="5"] .discussion-speaker-header { color: var(--discussion-speaker-5); }
+  .discussion-speaker[data-speaker="6"] .discussion-speaker-header { color: var(--discussion-speaker-6); }
+  .discussion-speaker[data-speaker="7"] .discussion-speaker-header { color: var(--discussion-speaker-7); }
+  .discussion-speaker[data-speaker] { border-left: 2px solid transparent; padding-left: 10px; }
+  .discussion-speaker[data-speaker="0"] { border-left-color: var(--discussion-speaker-0); }
+  .discussion-speaker[data-speaker="1"] { border-left-color: var(--discussion-speaker-1); }
+  .discussion-speaker[data-speaker="2"] { border-left-color: var(--discussion-speaker-2); }
+  .discussion-speaker[data-speaker="3"] { border-left-color: var(--discussion-speaker-3); }
+  .discussion-speaker[data-speaker="4"] { border-left-color: var(--discussion-speaker-4); }
+  .discussion-speaker[data-speaker="5"] { border-left-color: var(--discussion-speaker-5); }
+  .discussion-speaker[data-speaker="6"] { border-left-color: var(--discussion-speaker-6); }
+  .discussion-speaker[data-speaker="7"] { border-left-color: var(--discussion-speaker-7); }
   .discussion-summary {
     border: 1px solid var(--accent);
     border-radius: 10px;
@@ -1196,7 +1364,7 @@
   </style>
 </head>
 <body>
-<div id="app" class="with-log-expanded">
+<div id="app">
   <!-- Topbar -->
   <header id="topbar">
     <div class="logo">
@@ -2079,6 +2247,9 @@ function handleMessage(msg) {
     // Toggle buttons: hide Stop, show Send
     document.getElementById('stop-btn').style.display = 'none';
     document.getElementById('send-btn').style.display = 'flex';
+
+    // Persist whatever was rendered before the error (partial plan / subtasks)
+    saveCurrentConversation();
   }
 
   else if (type === 'skills_reloaded') {
@@ -2217,6 +2388,11 @@ function handleMessage(msg) {
   }
   else if (type === 'discussion_speaker_end') {
     finalizeDiscussionTurn(msg.turnId, msg.content);
+  }
+  else if (type === 'discussion_convergence_early') {
+    removeStatus();
+    renderDiscussionConvergenceNotice(msg.round, msg.reason);
+    appendLog('info', `✅ 讨论提前收敛（第 ${msg.round} 轮）: ${msg.reason || ''}`);
   }
   else if (type === 'discussion_convergence_start') {
     showStatus('🧭 主持人综合中...', 'thinking');
@@ -2797,6 +2973,9 @@ function stopMessage() {
   isThinking = false;
 
   showToast('Stopping...', 'thinking');
+
+  // Persist partial progress (plan card, subtask panels rendered so far)
+  saveCurrentConversation();
 }
 
 function onKeyDown(e) {
@@ -3691,10 +3870,14 @@ function selectChat(chatId) {
   const messages = document.getElementById('messages');
   if (messages) {
     messages.innerHTML = '';
-    if (conv.messages && conv.messages.length > 0) {
-      // Hide welcome screen
+    if (conv.chatHtml) {
+      // 恢复完整聊天流快照（任务分解卡片、子任务面板、工具调用/结果等）
       hideWelcome();
-      // Render messages
+      messages.innerHTML = conv.chatHtml;
+      scrollToBottom();
+    } else if (conv.messages && conv.messages.length > 0) {
+      // 兼容旧数据：仅渲染纯文本消息
+      hideWelcome();
       conv.messages.forEach(msg => {
         appendMessage(msg.role, msg.content);
       });
@@ -3741,8 +3924,25 @@ function saveCurrentConversation() {
   if (!currentConversationId || !conversations[currentConversationId]) return;
   
   const conv = conversations[currentConversationId];
-  // Messages are now saved when rendered (in renderUserMessage and finalizeAssistantBubble)
-  // Just update the timestamp and save to storage
+
+  // ── 捕获完整聊天流快照（任务分解卡片、子任务面板、工具调用/结果等）──
+  // 仅当 #messages 里确实渲染了内容时才覆盖旧快照，
+  // 避免「先切到空对话再切回来」时把已有的快照清空。
+  const messagesEl = document.getElementById('messages');
+  if (messagesEl) {
+    const hasContent = Array.from(messagesEl.children).some(
+      c => c.id !== 'welcome' && !c.classList.contains('status-indicator')
+    );
+    if (hasContent) {
+      const clone = messagesEl.cloneNode(true);
+      // 移除欢迎屏与状态指示器（不属于聊天内容）
+      clone.querySelectorAll('#welcome, .status-indicator').forEach(n => n.remove());
+      // 移除运行时才需要的 id，避免恢复后与实时渲染的 DOM 冲突
+      clone.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+      conv.chatHtml = clone.innerHTML;
+    }
+  }
+
   conv.updatedAt = new Date().toISOString();
   saveConversationsToStorage();
 }
@@ -3751,9 +3951,36 @@ function saveConversationsToStorage() {
   try {
     localStorage.setItem('agent-webui-conversations', JSON.stringify(conversations));
   } catch (e) {
-    console.error('Failed to save conversations:', e);
+    console.warn('[Conversation] localStorage save failed, trimming old snapshots:', e);
+    // Quota exceeded – drop chatHtml snapshots from oldest conversations first
+    const sorted = Object.values(conversations)
+      .filter(c => c.chatHtml)
+      .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt));
+    for (const conv of sorted) {
+      delete conv.chatHtml;
+      try {
+        localStorage.setItem('agent-webui-conversations', JSON.stringify(conversations));
+        console.log(`[Conversation] Trimmed chatHtml of "${conv.title}" to fit quota`);
+        return;
+      } catch (_) { /* keep trimming */ }
+    }
+    // Last resort: save without any snapshots
+    try {
+      localStorage.setItem('agent-webui-conversations', JSON.stringify(conversations));
+    } catch (e2) {
+      console.error('[Conversation] Failed to save even after trimming:', e2);
+    }
   }
 }
+
+// Save conversation snapshot when the page is about to unload (close / refresh)
+window.addEventListener('beforeunload', () => {
+  saveCurrentConversation();
+});
+// Fallback for mobile / bfcache scenarios
+window.addEventListener('pagehide', () => {
+  saveCurrentConversation();
+});
 
 function loadConversationsFromStorage() {
   try {
@@ -3873,8 +4100,8 @@ function initConversations() {
     }
   }
   
-  // Set currentConversationId to null so first message creates new conversation
-  currentConversationId = null;
+  // Keep currentConversationId so the user can continue the last conversation.
+  // ensureConversation() will create a new one only when the user explicitly starts a new chat.
 }
 
 // Create new conversation when user sends first message
@@ -4551,10 +4778,10 @@ function populateDiscussionSelect(elId, items, kind) {
 }
 
 // ── Discussion transcript rendering ──
-const DISCUSSION_PALETTE = ['#5b8def', '#e0734f', '#3fae7a', '#b166d6', '#d6a23f', '#46b3c9', '#d65f8a', '#7a8a99'];
+const DISCUSSION_PALETTE = ['--discussion-speaker-0','--discussion-speaker-1','--discussion-speaker-2','--discussion-speaker-3','--discussion-speaker-4','--discussion-speaker-5','--discussion-speaker-6','--discussion-speaker-7'];
 function discussionColor(idx) {
-  if (idx == null || idx < 0) return '#9b8cff';
-  return DISCUSSION_PALETTE[idx % DISCUSSION_PALETTE.length];
+  if (idx == null || idx < 0) return 'var(--accent)';
+  return `var(${DISCUSSION_PALETTE[idx % DISCUSSION_PALETTE.length]})`;
 }
 
 function renderDiscussionCard(disc) {
@@ -4591,9 +4818,11 @@ function ensureDiscussionTurn(round, turnId, sp, convergence) {
   if (!roundEl) return;
   if (document.getElementById(`turn-${turnId}`)) return;
   const color = sp.color != null && sp.color >= 0 ? discussionColor(sp.color) : discussionColor(sp.index);
+  const speakerIdx = (sp.color != null && sp.color >= 0) ? sp.color : (sp.index || 0);
   const div = document.createElement('div');
   div.className = 'discussion-speaker' + (convergence ? ' convergence' : '');
   div.id = `turn-${turnId}`;
+  div.setAttribute('data-speaker', String(speakerIdx % 8));
   div.innerHTML = `
     <div class="discussion-speaker-header">
       <span class="discussion-speaker-dot" style="background:${color}"></span>
@@ -4617,6 +4846,25 @@ function finalizeDiscussionTurn(turnId, content) {
   if (!turn) return;
   const body = turn.querySelector('.discussion-speaker-body');
   if (content != null) body.textContent = content;
+  scrollToBottom();
+}
+
+// 讨论提前收敛提示：后端判定已达成一致/陷入重复而提前结束时，
+// 必须在讨论卡片里给出可见解释，否则用户只会看到讨论莫名少了几轮。
+function renderDiscussionConvergenceNotice(round, reason) {
+  const disc = window._discussion;
+  if (!disc) return;
+  const host = document.getElementById(`discussion-rounds-${disc.id}`) || document.getElementById('messages');
+  if (!host) return;
+  if (host.querySelector('.discussion-converged-notice')) return; // 幂等
+  const div = document.createElement('div');
+  div.className = 'discussion-converged-notice';
+  div.innerHTML =
+    `<span class="discussion-converged-icon">✅</span>` +
+    `<span><b>第 ${escapeHtml(String(round))} 轮后提前收敛</b>` +
+    (reason ? ` — ${escapeHtml(reason)}` : '') +
+    `，跳过剩余轮次直接进入综合。</span>`;
+  host.appendChild(div);
   scrollToBottom();
 }
 
