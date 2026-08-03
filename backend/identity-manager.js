@@ -15,32 +15,66 @@ export class IdentityManager {
       id: null,       // ID.md — who this agent is
       dna: null,      // DNA.md — immutable essence
       soul: null,     // Soul.md — evolving spirit
+      memory: null,   // MEMORY.md — long-term memory
     };
     this.loaded = false;
   }
 
-  load() {
+  /**
+   * Read all identity files from disk into this.files.
+   * Called on load() and on every reload() so edits take effect live.
+   */
+  _readFiles() {
     const fileMap = {
-      id:   ['ID.md', 'id.md'],
-      dna:  ['DNA.md', 'dna.md'],
-      soul: ['Soul.md', 'SOUL.md', 'soul.md'],
+      id:     ['ID.md', 'id.md'],
+      dna:    ['DNA.md', 'dna.md'],
+      soul:   ['Soul.md', 'SOUL.md', 'soul.md'],
+      // NOTE: uppercase first. On case-insensitive filesystems (Windows)
+      // 'memory.md' and 'MEMORY.md' are the SAME file — probing the lowercase
+      // name first would create/overwrite the real MEMORY.md. Match the
+      // existing uppercase file first to avoid destructive collisions.
+      memory: ['MEMORY.md', 'memory.md', 'Memory.md'],
     };
 
     for (const [key, names] of Object.entries(fileMap)) {
+      // Reset first so a deleted file stops being injected.
+      this.files[key] = null;
       for (const name of names) {
         const filePath = path.join(this.dir, name);
-        if (fs.existsSync(filePath)) {
-          this.files[key] = {
-            content: fs.readFileSync(filePath, 'utf8'),
-            path: filePath,
-            name,
-          };
-          break;
+        try {
+          if (fs.existsSync(filePath)) {
+            this.files[key] = {
+              content: fs.readFileSync(filePath, 'utf8'),
+              path: filePath,
+              name,
+            };
+            break;
+          }
+        } catch (err) {
+          // ignore read errors, fall through
         }
       }
     }
+    return this;
+  }
 
+  load() {
+    this._readFiles();
     this.loaded = true;
+    return this;
+  }
+
+  /**
+   * Re-read files from disk. Invoked before every LLM call
+   * (via buildSystemBlock) so the latest ID/DNA/Soul/Memory edits
+   * are injected into the context without a restart.
+   */
+  reload() {
+    try {
+      this._readFiles();
+    } catch (err) {
+      // keep last good state if a disk read fails
+    }
     return this;
   }
 
@@ -50,6 +84,10 @@ export class IdentityManager {
    * This is injected but hidden from output.
    */
   buildSystemBlock() {
+    // Re-read from disk on every call so the latest ID/DNA/Soul/Memory
+    // edits are injected into this turn's LLM context without a restart.
+    this.reload();
+
     const parts = [];
 
     if (this.files.id) {
@@ -60,6 +98,9 @@ export class IdentityManager {
     }
     if (this.files.soul) {
       parts.push(`<identity_file name="Soul.md">\n${this.files.soul.content}\n</identity_file>`);
+    }
+    if (this.files.memory) {
+      parts.push(`<identity_file name="${this.files.memory.name}">\n${this.files.memory.content}\n</identity_file>`);
     }
 
     if (parts.length === 0) return '';
@@ -105,9 +146,10 @@ export class IdentityManager {
 
   getSummary() {
     return {
-      id:   this.files.id   ? { name: this.files.id.name,   loaded: true } : { loaded: false },
-      dna:  this.files.dna  ? { name: this.files.dna.name,  loaded: true } : { loaded: false },
-      soul: this.files.soul ? { name: this.files.soul.name, loaded: true } : { loaded: false },
+      id:     this.files.id     ? { name: this.files.id.name,     loaded: true } : { loaded: false },
+      dna:    this.files.dna    ? { name: this.files.dna.name,    loaded: true } : { loaded: false },
+      soul:   this.files.soul   ? { name: this.files.soul.name,   loaded: true } : { loaded: false },
+      memory: this.files.memory ? { name: this.files.memory.name, loaded: true } : { loaded: false },
     };
   }
 }
