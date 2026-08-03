@@ -40,7 +40,7 @@ import { feishuConfig, loadConfig as loadFeishuConfig, saveConfig as saveFeishuC
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.join(__dirname, '..');
-const IDENTITY_DIR = path.join(ROOT_DIR, '.workbuddy', 'memory');
+const IDENTITY_DIR = path.join(ROOT_DIR, 'Memory');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');

@@ -29,11 +29,12 @@ export class IdentityManager {
       id:     ['ID.md', 'id.md'],
       dna:    ['DNA.md', 'dna.md'],
       soul:   ['Soul.md', 'SOUL.md', 'soul.md'],
-      // NOTE: uppercase first. On case-insensitive filesystems (Windows)
-      // 'memory.md' and 'MEMORY.md' are the SAME file — probing the lowercase
-      // name first would create/overwrite the real MEMORY.md. Match the
-      // existing uppercase file first to avoid destructive collisions.
-      memory: ['MEMORY.md', 'memory.md', 'Memory.md'],
+      // Canonical long-term memory file for this project is `memory.md`
+      // (lowercase) under the project `Memory/` directory. Windows is
+      // case-insensitive so 'memory.md' === 'MEMORY.md'; we probe the
+      // lowercase name first per project convention, keeping uppercase/title
+      // variants as fallbacks for portability across filesystems.
+      memory: ['memory.md', 'MEMORY.md', 'Memory.md'],
     };
 
     for (const [key, names] of Object.entries(fileMap)) {
