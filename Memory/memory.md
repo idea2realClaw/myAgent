@@ -48,3 +48,9 @@
 - **start.bat**：`do_start` 改为**前台运行** `node backend\server.js`（去掉 `Start-Process -WindowStyle Hidden -RedirectStandardOutput`），后端 log 实时打印到 cmd 窗口；`free_port` 在启动前先杀掉占用 3737 的旧进程；末尾保留 `pause`。
 - **调试手段**：`Get-Process -Name node` + `netstat -ano | findstr ":3737 "` 看是否有多实例/端口监听；`logs/agent-webui-server.log` 查 `EADDRINUSE` 与 `[PlannedLoop] 汇总完成: 答案长度=`。
 - **验证**：杀光残留 node 后干净启动 → health=200、3737 单一新 server 监听、新 server 启动无 EADDRINUSE；端到端 WS 测试 `done` 带回非空内容（28 字正确回答），8.3s 完成。
+
+## 设计原则：MyAgent 与 WorkBuddy 是不同的人设，不合并（用户 2026-08-03 明确）
+- **MyAgent（本产品）与 WorkBuddy（开发/运维它的助手 Agent）是刻意分离的两种人设**，身份与记忆文件**不可合并、不可互相镜像/软链**。
+- MyAgent 的身份与长期记忆：`Memory/ID.md`、`DNA.md`、`Soul.md`、`memory.md`，由 `backend/identity-manager.js` 每轮注入 MyAgent 自己的 LLM 上下文。
+- WorkBuddy 的工作记忆：`.workbuddy/memory/`（由 harness 注入助手本体，作为开发本项目时的项目知识），是另一个"人"的记忆。
+- 两者内容可能都涉及 myAgent 项目事实，但服务于不同"人"；**不要把 MyAgent 的 ID/DNA/Soul 注入 WorkBuddy，也不要把两边 memory 互相覆盖/软链**。
