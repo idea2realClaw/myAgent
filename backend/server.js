@@ -2267,7 +2267,7 @@ async function runSkillTool(args, callId, { ws, session }) {
   if (!injected) {
     return { partial: false, callId, toolName: 'skill', resultText: `Skill '${name}' not found or disabled.`, ok: false, durationMs: Date.now() - start };
   }
-  const body = `--- SKILL: ${injected.name} ---\n${injected.content}` +
+  const body = `--- SKILL: ${injected.name} ---\nSkill directory: ${path.dirname(injected.path)}\n${injected.content}` +
     (injected.hasMore ? `\n\n[This skill has more pages; call skill with page=${injected.page + 1} to continue]` : '');
   return { partial: false, callId, toolName: 'skill', resultText: body, ok: true, durationMs: Date.now() - start };
 }
@@ -2780,6 +2780,10 @@ function selfRestart() {
   // Release the port, then poll the new instance's health. The new instance
   // binds 3737 as soon as the port is free (its own EADDRINUSE-retry covers
   // the brief gap), so there is no need for the old process to keep holding it.
+  // Close the WebSocket server + sockets too, otherwise lingering WS connections
+  // keep the HTTP server's close callback from firing and the old process hangs.
+  try { wss.close(); } catch (_e) { /* ignore */ }
+  for (const [, s] of sessions) { try { s.ws.terminate(); } catch (_e) { /* ignore */ } }
   server.closeAllConnections?.();
   server.close(() => {
     console.log('[Restart] Port released by old instance; new instance taking over...');
@@ -2787,7 +2791,9 @@ function selfRestart() {
     const poll = setInterval(async () => {
       try {
         const r = await fetch(`http://127.0.0.1:${PORT}/api/health`);
-        if (r.ok) {
+        // Guard against a race where the child crashes right after answering the
+        // health check: only hand off if the child process is still alive.
+        if (r.ok && !child.killed && child.exitCode === null && child.signalCode === null) {
           clearInterval(poll);
           console.log('[Restart] New instance healthy. Old instance exiting.');
           finishOld();
@@ -2802,6 +2808,14 @@ function selfRestart() {
       }
     }, 250);
   });
+
+  // Hard deadline: never linger as a zombie after a restart handoff.
+  setTimeout(() => {
+    if (!done) {
+      console.error('[Restart] Handoff deadline exceeded (20s); forcing exit.');
+      process.exit(1);
+    }
+  }, 20000).unref();
 }
 
 // SIGUSR1 still works as a manual restart signal (e.g. `kill -USR1 <pid>`)

@@ -24,6 +24,9 @@ export class SkillLoader {
   constructor(cwd = process.cwd()) {
     this.cwd = cwd;
     this.skills = new Map(); // name -> { meta, content, path, enabled, mode }
+    this._aliases = new Map(); // 小写别名(frontmatter名/目录slug) -> skills 中的规范键
+    this._lastLoadAt = 0; // 上次全盘扫描时间（用于 miss 时节流重扫）
+    this._lastDirMtime = 0; // 上次扫描时各 skill 搜索目录的最大 mtime（用于新鲜度检查）
     this.disabledSkills = new Set(); // Set of disabled skill names
     this.skillModes = {}; // Map of skill name -> mode (off/cloud/local/both)
     this.configFile = path.join(cwd, 'config.json');
@@ -31,16 +34,19 @@ export class SkillLoader {
 
   load() {
     this.skills.clear();
-    
+    this._aliases.clear();
+
     // Load disabled skills from config
     this._loadConfig();
 
+    let maxMtime = 0;
     for (const basePath of SKILL_SEARCH_PATHS) {
       const resolved = path.isAbsolute(basePath)
         ? basePath
         : path.join(this.cwd, basePath);
 
       if (!fs.existsSync(resolved)) continue;
+      try { maxMtime = Math.max(maxMtime, fs.statSync(resolved).mtimeMs); } catch { /* ignore */ }
 
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
       for (const entry of entries) {
@@ -57,19 +63,62 @@ export class SkillLoader {
 
         // First-found wins (project > global)
         if (!this.skills.has(name)) {
-          const enabled = !this.disabledSkills.has(name);
+          // 禁用列表同时按 frontmatter 名与目录名(slug)匹配，避免两者不一致时禁用失效
+          const enabled = !this.disabledSkills.has(name) && !this.disabledSkills.has(entry.name);
           this.skills.set(name, { meta, content, path: skillFile, enabled, mode: 'both' });
+          this._registerAliases(name, entry.name);
         }
       }
     }
 
     // 应用持久化的技能模式（off/cloud/local/both）
     for (const [name, mode] of Object.entries(this.skillModes)) {
-      const s = this.skills.get(name);
+      const key = this._resolveKey(name);
+      const s = key ? this.skills.get(key) : this.skills.get(name);
       if (s) s.mode = mode;
     }
 
+    this._lastLoadAt = Date.now();
+    this._lastDirMtime = maxMtime;
     return this.skills;
+  }
+
+  // 别名注册：frontmatter 名与目录名(slug)都可命中同一个 skill
+  _registerAliases(canonical, dirName) {
+    for (const alias of [canonical, dirName]) {
+      if (!alias) continue;
+      const key = String(alias).toLowerCase().trim();
+      if (key && !this._aliases.has(key)) this._aliases.set(key, canonical);
+    }
+  }
+
+  // 把任意形式的名字（frontmatter 名 / 目录 slug / 大小写差异）解析为 skills Map 的规范键
+  _resolveKey(name) {
+    if (name == null) return null;
+    const n = String(name).trim();
+    if (!n) return null;
+    if (this.skills.has(n)) return n;
+    const lower = n.toLowerCase();
+    if (this._aliases.has(lower)) return this._aliases.get(lower);
+    for (const key of this.skills.keys()) {
+      if (key.toLowerCase() === lower) return key;
+    }
+    return null;
+  }
+
+  // 新鲜度检查：任一 skill 搜索目录的 mtime 比上次加载新 → 重扫（仅几次 stat，开销极小）
+  _rescanIfStale() {
+    try {
+      for (const basePath of SKILL_SEARCH_PATHS) {
+        const resolved = path.isAbsolute(basePath) ? basePath : path.join(this.cwd, basePath);
+        let st;
+        try { st = fs.statSync(resolved); } catch { continue; }
+        if (st.mtimeMs > this._lastDirMtime) {
+          this.load();
+          return;
+        }
+      }
+    } catch { /* ignore */ }
   }
   
   _loadConfig() {
@@ -152,18 +201,30 @@ export class SkillLoader {
   }
 
   getContent(name) {
-    const skill = this.skills.get(name);
+    const skill = this.get(name);
     if (!skill || !skill.enabled) return null;
     return skill.content;
   }
 
   // 返回技能完整对象 { meta, content, path, enabled, mode }（供 skill-executor 真正执行使用）
+  // 自愈：兼容目录 slug / 大小写差异；miss 时先做廉价的目录新鲜度检查（mtime 变了才重扫），
+  // 仍未命中且距上次全盘加载超过节流窗口则强制重扫一次（防止频繁全盘扫描）
   get(name) {
-    return this.skills.get(name) || null;
+    let key = this._resolveKey(name);
+    if (!key) {
+      this._rescanIfStale();
+      key = this._resolveKey(name);
+    }
+    if (!key && Date.now() - this._lastLoadAt > 1500) {
+      console.log(`[SkillLoader] Skill "${name}" not in memory; rescanning skill directories...`);
+      this.load();
+      key = this._resolveKey(name);
+    }
+    return key ? this.skills.get(key) : null;
   }
   
   getIconPath(name) {
-    const skill = this.skills.get(name);
+    const skill = this.get(name);
     if (!skill) return null;
     const dir = path.dirname(skill.path);
     const candidates = ['icon.png', 'icon.svg', 'icon.jpg', 'icon.jpeg', 'icon.webp'];
@@ -175,13 +236,14 @@ export class SkillLoader {
   }
   
   getMode(name) {
-    const skill = this.skills.get(name);
+    const skill = this.get(name);
     if (!skill) return null;
     return skill.mode || 'both';
   }
   
   setMode(name, mode) {
-    const skill = this.skills.get(name);
+    const key = this._resolveKey(name) || name;
+    const skill = this.skills.get(key);
     if (!skill) return;
     skill.mode = mode;
     try {
@@ -190,7 +252,7 @@ export class SkillLoader {
         config = JSON.parse(fs.readFileSync(this.configFile, 'utf8'));
       }
       config.skillModes = config.skillModes || {};
-      config.skillModes[name] = mode;
+      config.skillModes[key] = mode;
       fs.writeFileSync(this.configFile, JSON.stringify(config, null, 2));
     } catch (err) {
       console.error('[SkillLoader] Failed to save mode:', err.message);
@@ -211,22 +273,26 @@ export class SkillLoader {
   }
   
   isEnabled(name) {
-    return this.skills.has(name) && this.skills.get(name).enabled;
+    const key = this._resolveKey(name);
+    return !!key && this.skills.get(key).enabled;
   }
   
   enable(name) {
-    if (this.skills.has(name)) {
-      this.skills.get(name).enabled = true;
+    const key = this._resolveKey(name) || name;
+    if (this.skills.has(key)) {
+      this.skills.get(key).enabled = true;
     }
+    this.disabledSkills.delete(key);
     this.disabledSkills.delete(name);
     this._saveConfig();
   }
   
   disable(name) {
-    if (this.skills.has(name)) {
-      this.skills.get(name).enabled = false;
+    const key = this._resolveKey(name) || name;
+    if (this.skills.has(key)) {
+      this.skills.get(key).enabled = false;
     }
-    this.disabledSkills.add(name);
+    this.disabledSkills.add(key);
     this._saveConfig();
   }
   
@@ -261,7 +327,7 @@ export class SkillLoader {
           name: parsed.meta.name || entry.name,
           description: parsed.meta.description,
           path: skillFile2,
-          alreadyLoaded: this.skills.has(parsed.meta.name || entry.name),
+          alreadyLoaded: !!this._resolveKey(parsed.meta.name || entry.name),
         });
       }
       
@@ -316,6 +382,7 @@ export class SkillLoader {
   }
 
   toSystemPromptSnippet() {
+    this._rescanIfStale();
     const list = this.getEnabled();
     if (list.length === 0) return '';
     const xml = list
@@ -328,7 +395,7 @@ export class SkillLoader {
   // 用于 agent 循环中的 `skill` 工具：模型主动加载某 skill 的完整指令后遵循执行。
   // 支持分页 + 截断，避免超长 skill 撑爆上下文（与 qaimodelbuilder 的只读注入 + 分页一致）。
   getSkillContentForInjection(name, { page = 0, pageSize = 6000, maxChars = 24000 } = {}) {
-    const skill = this.skills.get(name);
+    const skill = this.get(name);
     if (!skill || !skill.enabled) return null;
 
     let content = skill.content || '';
@@ -345,6 +412,7 @@ export class SkillLoader {
     return {
       name: skill.meta.name,
       description: skill.meta.description,
+      path: skill.path,
       content: pageContent,
       page: safePage,
       pages,
@@ -356,6 +424,7 @@ export class SkillLoader {
 
   // 导出供 `skill` 工具使用的 schema 形状（OpenAI 函数调用）
   toToolSchema() {
+    this._rescanIfStale();
     const list = this.getEnabled();
     return {
       type: 'function',
