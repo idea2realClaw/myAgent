@@ -516,14 +516,26 @@
     }
 
     #messages {
-      flex: 1; overflow-y: auto; padding: 20px;
-      display: flex; flex-direction: column; gap: 20px;
+      flex: 1; overflow-y: auto; padding: var(--space-5);
+      display: flex; flex-direction: column; gap: var(--space-4);
     }
 
-    /* ── Message bubbles ─────────────────────────────────── */
-    .message { display: flex; gap: var(--space-3); max-width: 900px; width: 100%; }
-    .message.user { flex-direction: row-reverse; align-self: flex-end; }
-    .message.assistant { align-self: flex-start; }
+    /* ── Message bubbles (QAI ChatStream 风格: 居中列、min(800px,85%) 宽) ── */
+    .message { display: flex; gap: var(--space-3); max-width: min(800px, 85%); width: 100%; margin: 0 auto; }
+    .message.user { flex-direction: row-reverse; }
+
+    .msg-content-wrap { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+    .message.user .msg-content-wrap { align-items: flex-end; }
+
+    /* 气泡上方的 meta 行（AI 方显示模型名） */
+    .message-meta {
+      font-size: var(--text-xs); color: var(--text3);
+      display: flex; align-items: center; gap: var(--space-2);
+      opacity: 0.7; transition: opacity var(--duration-fast);
+    }
+    .message:hover .message-meta { opacity: 1; }
+    .message.user .message-meta { flex-direction: row-reverse; }
+    .assistant-label { font-weight: 600; color: var(--accent2); }
 
     .avatar {
       width: 36px; height: 36px; border-radius: var(--radius-full);
@@ -541,12 +553,13 @@
 
     .bubble {
       padding: var(--space-3) var(--space-4); border-radius: var(--radius);
-      max-width: calc(100% - 48px); line-height: var(--leading-relaxed);
-      box-shadow: var(--shadow-sm);
+      max-width: 100%; line-height: var(--leading-relaxed);
+      box-shadow: var(--shadow-sm); word-break: break-word;
     }
     .message.user .bubble {
-      background: var(--accent); color: var(--user-text);
+      background: var(--user-bubble); color: var(--user-text);
       border-bottom-right-radius: var(--radius-xs);
+      white-space: pre-wrap;
     }
     .message.assistant .bubble {
       background: var(--ai-bubble); border: 1px solid var(--border);
@@ -556,8 +569,8 @@
     /* ── Task plan panel ─────────────────────────────────── */
     .plan-card {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: var(--space-4); width: 100%; max-width: 900px;
-      align-self: flex-start; box-shadow: var(--shadow-md);
+      border-radius: var(--radius); padding: var(--space-4); width: 100%; max-width: min(800px, 85%);
+      margin: 0 auto; box-shadow: var(--shadow-md);
     }
     .plan-card .plan-title {
       font-size: var(--text-md); font-weight: 700; color: var(--accent2); margin-bottom: var(--space-3);
@@ -617,7 +630,7 @@
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       font-size: var(--text-sm); color: var(--text2);
       border-left: 3px solid var(--accent);
-      align-self: flex-start; max-width: 900px; width: 100%;
+      max-width: min(800px, 85%); width: 100%; margin: 0 auto;
       display: flex; align-items: center; gap: var(--space-2);
     }
     .status-bar.synthesizing { border-left-color: var(--yellow); }
@@ -743,47 +756,104 @@
     #toast.success { border-color: var(--green); color: var(--green); }
     #toast.error { border-color: var(--red); color: var(--red); }
 
-    /* ── Tool Call Cards ──────────────────────────────── */
-    .tool-call-card {
-      margin: 12px 0; padding: 12px 16px; border-radius: var(--radius-sm);
-      background: var(--bg3); border: 1px solid var(--border);
-      font-size: 0.8125rem; max-width: 90%;
+    /* ── Tool Exec Panel (QAI ChatStream 风格: 调用+输出同 Panel，立体效果) ── */
+    .tool-exec-panel {
+      width: 100%; max-width: min(800px, 85%); margin: 0 auto;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      overflow: hidden; background: var(--bg2); font-size: var(--text-base);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
+      transition: border-color var(--transition);
     }
-    .tool-call-header {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
-      font-weight: 600; color: var(--accent2);
-    }
-    .tool-icon { font-size: 1rem; }
-    .tool-name { font-size: 0.8125rem; }
-    .tool-call-args { color: var(--text2); font-size: 0.75rem; margin-top: 8px; }
-    .tool-call-args.collapsed { display: none; }
-    .tool-call-args pre { margin: 8px 0 0 0; padding: 8px; background: var(--bg4); border-radius: 6px; overflow-x: auto; }
-    .tool-url { color: var(--blue); word-break: break-all; }
-    .tool-path { color: var(--green); }
+    .tool-exec-panel--done { border-color: rgba(52,211,153,0.35); }
+    .tool-exec-panel--error { border-color: rgba(248,113,113,0.45); }
 
-    /* ── Tool Result Cards ────────────────────────────── */
-    .tool-result-card {
-      margin: 8px 0 16px 0; padding: 12px 16px; border-radius: var(--radius-sm);
-      font-size: 0.75rem; max-width: 90%;
-      border-left: 3px solid;
-      cursor: pointer;
+    .tool-exec-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px var(--space-3); gap: var(--space-2);
+      background: linear-gradient(180deg, var(--bg4) 0%, var(--bg3) 100%);
+      cursor: pointer; user-select: none;
+      border-bottom: 1px solid var(--border);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+      transition: background var(--transition);
     }
-    .tool-result-card.success { background: rgba(52,211,153,0.08); border-color: var(--green); }
-    .tool-result-card.error { background: rgba(248,113,113,0.08); border-color: var(--red); }
-    .tool-result-header { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-    .tool-result-icon { font-size: 0.875rem; }
-    .tool-result-status { font-size: 0.75rem; flex: 1; }
-    .tool-result-card.success .tool-result-status { color: var(--green); }
-    .tool-result-card.error .tool-result-status { color: var(--red); }
-    .tool-toggle-icon { font-size: 0.625rem; color: var(--text2); transition: transform 0.2s; }
-    .tool-result-output { max-height: 300px; overflow-y: auto; margin-top: 8px; }
-    .tool-result-output.collapsed { display: none; }
-    .tool-result-output pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
+    .tool-exec-header:hover { background: linear-gradient(180deg, var(--hover) 0%, var(--bg4) 100%); }
+    .tool-exec-header-left { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; }
+    .tool-exec-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+    .tool-exec-spinner {
+      width: 13px; height: 13px; flex-shrink: 0;
+      border: 2px solid var(--border-light); border-top-color: var(--accent2);
+      border-radius: 50%; animation: tool-exec-spin 0.8s linear infinite;
+    }
+    @keyframes tool-exec-spin { to { transform: rotate(360deg); } }
+
+    .tool-exec-done-icon { color: var(--green); font-weight: 700; font-size: var(--text-base); line-height: 1; flex-shrink: 0; }
+    .tool-exec-error-icon { color: var(--red); font-weight: 700; font-size: var(--text-base); line-height: 1; flex-shrink: 0; }
+
+    .tool-exec-title {
+      font-weight: 600; color: var(--text); font-size: var(--text-sm);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tool-exec-panel--done .tool-exec-title { color: var(--green); }
+    .tool-exec-panel--error .tool-exec-title { color: var(--red); }
+
+    .tool-exec-subtitle {
+      font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent2);
+      background: rgba(124,106,247,0.12);
+      padding: 1px 6px; border-radius: 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;
+      flex-shrink: 1;
+    }
+
+    .tool-exec-size-badge {
+      font-size: var(--text-xs); font-family: var(--font-mono); color: var(--text2);
+      background: rgba(255,255,255,0.06); border-radius: 3px; padding: 1px 5px; white-space: nowrap;
+    }
+
+    .tool-exec-arrow {
+      font-size: var(--text-xs); color: var(--text2);
+      transition: transform var(--transition);
+      display: inline-block; flex-shrink: 0;
+    }
+    .tool-exec-arrow--collapsed { transform: rotate(-90deg); }
+
+    .tool-exec-body {
+      padding: var(--space-2) var(--space-3);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .tool-exec-body.collapsed { display: none; }
+
+    .tool-exec-label {
+      font-size: var(--text-xs); font-weight: 600; color: var(--text3);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    .tool-exec-args, .tool-exec-output {
+      background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); overflow: hidden;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.30);
+    }
+    .tool-exec-args-header, .tool-exec-output-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px var(--space-3); min-height: 28px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%);
+      border-bottom: 1px solid var(--border);
+    }
+    .tool-exec-args-pre, .tool-exec-output-pre {
+      margin: 0; font-family: var(--font-mono); font-size: var(--text-sm);
+      line-height: 1.55; color: var(--code-text);
+      white-space: pre-wrap; word-break: break-all;
+      max-height: 260px; overflow-y: auto;
+      padding: var(--space-2) var(--space-3);
+    }
+    .tool-exec-args-pre { max-height: 130px; }
+    .tool-exec-panel--error .tool-exec-output { border-color: rgba(248,113,113,0.30); }
+    .tool-exec-panel--error .tool-exec-output-pre { color: var(--red); }
     /* ── Exec Output Card ────────────────────────── */
     .exec-output-card {
-      margin: 8px 0 16px 0; border-radius: var(--radius-sm);
+      margin: 0 auto; border-radius: var(--radius-sm);
       background: #0a0a0f; border: 1px solid #1a1a2e;
-      font-size: 0.75rem; max-width: 90%; overflow: hidden;
+      font-size: 0.75rem; max-width: min(800px, 85%); width: 100%; overflow: hidden;
     }
     .exec-output-header {
       display: flex; align-items: center; gap: 8px;
@@ -976,17 +1046,6 @@
     opacity: 0.6;
   }
   #log-clear:hover { opacity: 1; background: var(--bg4); }
-
-  .model-badge {
-    display: inline-block;
-    font-size: 0.625rem;
-    color: var(--text2);
-    background: var(--bg3);
-    padding: 1px 6px;
-    border-radius: 3px;
-    margin-bottom: 6px;
-    font-weight: 500;
-  }
 
   /* ── Approval Dialog ───────────────────────── */
   .approval-overlay {
@@ -1231,7 +1290,9 @@
   .discussion-summary {
     border: 1px solid var(--accent);
     border-radius: 10px;
-    margin: 12px 0;
+    margin: 0 auto;
+    max-width: min(800px, 85%);
+    width: 100%;
     padding: 12px;
     background: var(--bg2);
   }
@@ -2176,13 +2237,13 @@ function handleMessage(msg) {
 
   else if (type === 'tool_call') {
     showStatus(`🔧 Calling tool: ${msg.tool}...`, 'thinking');
-    renderToolCall(msg.tool, msg.args);
+    renderToolCall(msg.tool, msg.args, msg.callId);
     appendLog('warn', `🔧 调用工具: ${msg.tool}`, msg.args ? JSON.stringify(msg.args).slice(0, 80) : '');
   }
 
   else if (type === 'tool_result') {
     removeStatus();
-    renderToolResult(msg.success, msg.output);
+    renderToolResult(msg.success, msg.output, msg.callId);
     appendLog(msg.success ? 'info' : 'warn', `🔧 工具返回: ${msg.success ? '成功' : '失败'}`);
   }
 
@@ -2463,98 +2524,147 @@ function removeStatus() {
   }
 }
 
-function renderToolCall(tool, args) {
+// ── Tool Exec Panel (QAI ChatStream 风格: 调用+输出合并为一个立体 Panel) ──
+const toolPanelMap = new Map(); // callId → panel element
+let toolPanelStack = []; // 无 callId 时的回退栈
+
+function toolSubtitle(tool, args) {
+  if (!args) return '';
+  if (tool === 'shell_execute' && args.command) return args.command;
+  if (tool === 'web_fetch' && args.url) return args.url;
+  if (args.path) return args.path;
+  if (args.pattern) return args.pattern;
+  if (args.query) return args.query;
+  return '';
+}
+
+function toolArgsText(tool, args) {
+  if (!args) return '';
+  if (tool === 'shell_execute' && args.command) return args.command;
+  return JSON.stringify(args, null, 2);
+}
+
+function renderToolCall(tool, args, callId) {
   hideWelcome();
   const container = document.getElementById('messages');
   const el = document.createElement('div');
-  el.className = 'tool-call-card';
+  el.className = 'tool-exec-panel';
+  el.dataset.pending = '1';
+  if (callId) el.dataset.callId = callId;
 
-  // Generate summary
-  let summary = tool;
-  if (args) {
-    if (tool === 'shell_execute' && args.command) {
-      summary = `${tool}: ${args.command.slice(0, 50)}${args.command.length > 50 ? '...' : ''}`;
-    } else if (tool === 'web_fetch' && args.url) {
-      summary = `${tool}: ${args.url}`;
-    } else if (args.path) {
-      summary = `${tool}: ${args.path}`;
-    } else if (args.pattern) {
-      summary = `${tool}: ${args.pattern}`;
-    }
-  }
-
-  const argsId = `tool-args-${Date.now()}`;
-
-  let argsHtml = '';
-  if (args) {
-    if (tool === 'shell_execute' && args.command) {
-      argsHtml = `<pre><code>${escapeHtml(args.command)}</code></pre>`;
-    } else if (tool === 'web_fetch' && args.url) {
-      argsHtml = `<div class="tool-url">${escapeHtml(args.url)}</div>`;
-    } else if (tool === 'file_read' && args.path) {
-      argsHtml = `<div class="tool-path">${escapeHtml(args.path)}</div>`;
-    } else if (tool === 'file_write' && args.path) {
-      argsHtml = `<div class="tool-path">${escapeHtml(args.path)}</div>`;
-    } else if (tool === 'file_edit' && args.path) {
-      argsHtml = `<div class="tool-path">${escapeHtml(args.path)}</div>`;
-    } else if (tool === 'file_glob' && args.pattern) {
-      argsHtml = `<div class="tool-pattern">Pattern: ${escapeHtml(args.pattern)}</div>`;
-    } else if (tool === 'file_grep' && args.pattern) {
-      argsHtml = `<div class="tool-pattern">Pattern: ${escapeHtml(args.pattern)}</div>`;
-    } else {
-      argsHtml = `<pre><code>${escapeHtml(JSON.stringify(args, null, 2))}</code></pre>`;
-    }
-  }
+  const subtitle = toolSubtitle(tool, args);
+  const subtitleHtml = subtitle
+    ? `<span class="tool-exec-subtitle">${escapeHtml(subtitle.length > 80 ? subtitle.slice(0, 80) + '…' : subtitle)}</span>`
+    : '';
+  const argsText = toolArgsText(tool, args);
+  const argsBlock = argsText
+    ? `<div class="tool-exec-args">
+         <div class="tool-exec-args-header"><span class="tool-exec-label">参数</span></div>
+         <pre class="tool-exec-args-pre">${escapeHtml(argsText)}</pre>
+       </div>`
+    : '';
 
   el.innerHTML = `
-    <div class="tool-call-header" onclick="toggleToolOutput('${argsId}')">
-      <span class="tool-icon">🔧</span>
-      <span class="tool-name">${summary}</span>
-      <span class="tool-toggle-icon" id="${argsId}-icon">▶</span>
+    <div class="tool-exec-header" onclick="toggleToolPanel(this)">
+      <div class="tool-exec-header-left">
+        <span class="tool-exec-spinner"></span>
+        <span class="tool-exec-title">${escapeHtml(tool)}</span>
+        ${subtitleHtml}
+      </div>
+      <div class="tool-exec-header-right">
+        <span class="tool-exec-size-badge" style="display:none"></span>
+        <span class="tool-exec-arrow">▼</span>
+      </div>
     </div>
-    <div class="tool-call-args collapsed" id="${argsId}">
-      ${argsHtml}
+    <div class="tool-exec-body">
+      ${argsBlock}
+      <div class="tool-exec-output">
+        <div class="tool-exec-output-header"><span class="tool-exec-label">输出</span></div>
+        <pre class="tool-exec-output-pre">执行中…</pre>
+      </div>
     </div>
   `;
   container.appendChild(el);
+  if (callId) toolPanelMap.set(callId, el);
+  toolPanelStack.push(el);
   scrollToBottom();
 }
 
-function renderToolResult(success, output) {
-  const container = document.getElementById('messages');
-  const el = document.createElement('div');
-  el.className = `tool-result-card ${success ? 'success' : 'error'}`;
+function toggleToolPanel(headerEl) {
+  const body = headerEl.parentElement.querySelector('.tool-exec-body');
+  const arrow = headerEl.querySelector('.tool-exec-arrow');
+  if (!body || !arrow) return;
+  body.classList.toggle('collapsed');
+  arrow.classList.toggle('tool-exec-arrow--collapsed');
+}
 
-  // Generate summary
-  let summary = success ? 'Success' : 'Failed';
-  
-  // Handle null/undefined output
-  const safeOutput = output == null ? '(no output)' : output;
-  
-  if (success && output) {
-    if (typeof output === 'object' && output.entries) {
-      summary = `Success - ${output.entries.length} entries`;
-    } else if (typeof output === 'object' && output.matches) {
-      summary = `Success - ${output.matches.length} matches`;
-    } else if (typeof output === 'string' && output.length > 100) {
-      summary = `Success - ${output.length} chars`;
-    }
-  } else if (!success && output) {
-    const errorMsg = typeof output === 'object' ? output.error : output;
-    summary = `Failed - ${errorMsg.slice(0, 50)}`;
+function findToolPanel(callId) {
+  // 优先按 callId 精确配对（支持并行工具）
+  if (callId && toolPanelMap.has(callId)) {
+    const el = toolPanelMap.get(callId);
+    toolPanelMap.delete(callId);
+    return el;
+  }
+  // 回退：栈序（无 callId 的旧事件）
+  while (toolPanelStack.length) {
+    const candidate = toolPanelStack.pop();
+    if (!candidate.isConnected) continue; // 会话切换后旧 Panel 已脱离 DOM
+    if (candidate.dataset.pending === '1') return candidate;
+  }
+  return null;
+}
+
+function renderToolResult(success, output, callId) {
+  const el = findToolPanel(callId);
+  if (!el) { renderToolResultFallback(success, output); return; }
+  delete el.dataset.pending;
+  el.classList.add(success ? 'tool-exec-panel--done' : 'tool-exec-panel--error');
+
+  // Header: spinner → ✓ / ✗
+  const spinner = el.querySelector('.tool-exec-spinner');
+  if (spinner) {
+    spinner.outerHTML = success
+      ? '<span class="tool-exec-done-icon">✓</span>'
+      : '<span class="tool-exec-error-icon">✗</span>';
   }
 
+  // Output summary + size badge
+  const safeOutput = output == null ? '(no output)' : output;
   const outputStr = typeof safeOutput === 'string' ? safeOutput : JSON.stringify(safeOutput, null, 2);
-  const outputId = `tool-output-${Date.now()}`;
+  const badge = el.querySelector('.tool-exec-size-badge');
+  if (badge) {
+    badge.textContent = `${outputStr.length} chars`;
+    badge.style.display = '';
+  }
 
+  const pre = el.querySelector('.tool-exec-output-pre');
+  if (pre) pre.textContent = outputStr || '(no output)';
+  scrollToBottom();
+}
+
+// 找不到配对 Panel 时的兑底（独立卡片）
+function renderToolResultFallback(success, output) {
+  const container = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = 'tool-exec-panel ' + (success ? 'tool-exec-panel--done' : 'tool-exec-panel--error');
+  const safeOutput = output == null ? '(no output)' : output;
+  const outputStr = typeof safeOutput === 'string' ? safeOutput : JSON.stringify(safeOutput, null, 2);
   el.innerHTML = `
-    <div class="tool-result-header" onclick="toggleToolOutput('${outputId}')">
-      <span class="tool-result-icon">${success ? '✅' : '❌'}</span>
-      <span class="tool-result-status">${summary}</span>
-      <span class="tool-toggle-icon" id="${outputId}-icon">▶</span>
+    <div class="tool-exec-header" onclick="toggleToolPanel(this)">
+      <div class="tool-exec-header-left">
+        ${success ? '<span class="tool-exec-done-icon">✓</span>' : '<span class="tool-exec-error-icon">✗</span>'}
+        <span class="tool-exec-title">${success ? 'Success' : 'Failed'}</span>
+      </div>
+      <div class="tool-exec-header-right">
+        <span class="tool-exec-size-badge">${outputStr.length} chars</span>
+        <span class="tool-exec-arrow">▼</span>
+      </div>
     </div>
-    <div class="tool-result-output collapsed" id="${outputId}">
-      <pre><code>${escapeHtml(outputStr)}</code></pre>
+    <div class="tool-exec-body">
+      <div class="tool-exec-output">
+        <div class="tool-exec-output-header"><span class="tool-exec-label">输出</span></div>
+        <pre class="tool-exec-output-pre">${escapeHtml(outputStr)}</pre>
+      </div>
     </div>
   `;
   container.appendChild(el);
@@ -2662,12 +2772,14 @@ function createAssistantBubble() {
   const container = document.getElementById('messages');
   const el = document.createElement('div');
   el.className = 'message assistant';
-  const badgeHtml = _currentModelAlias ? `<div class="model-badge">${_currentModelAlias}</div>` : '';
+  const aiName = _currentModelAlias || 'Assistant';
   el.innerHTML = `
     <div class="avatar">AI</div>
-    <div class="bubble">
-      ${badgeHtml}
-      <div class="md-content" id="streaming-content"></div>
+    <div class="msg-content-wrap">
+      <div class="message-meta"><span class="assistant-label">${escapeHtml(aiName)}</span></div>
+      <div class="bubble">
+        <div class="md-content" id="streaming-content"></div>
+      </div>
     </div>
   `;
   container.appendChild(el);
@@ -2727,12 +2839,14 @@ function renderAssistantMessage(content) {
   const container = document.getElementById('messages');
   const el = document.createElement('div');
   el.className = 'message assistant';
-  const badgeHtml = _currentModelAlias ? `<div class="model-badge">${_currentModelAlias}</div>` : '';
+  const aiName = _currentModelAlias || 'Assistant';
   el.innerHTML = `
     <div class="avatar">AI</div>
-    <div class="bubble">
-      ${badgeHtml}
-      <div class="md-content">${marked.parse(content)}</div>
+    <div class="msg-content-wrap">
+      <div class="message-meta"><span class="assistant-label">${escapeHtml(aiName)}</span></div>
+      <div class="bubble">
+        <div class="md-content">${marked.parse(content)}</div>
+      </div>
     </div>
   `;
   container.appendChild(el);
@@ -2757,7 +2871,9 @@ function appendMessage(role, content) {
     el.className = 'message user';
     el.innerHTML = `
       <div class="avatar">You</div>
-      <div class="bubble">${escapeHtml(content)}</div>
+      <div class="msg-content-wrap">
+        <div class="bubble">${escapeHtml(content)}</div>
+      </div>
     `;
     container.appendChild(el);
     scrollToBottom();
@@ -2765,12 +2881,14 @@ function appendMessage(role, content) {
     const container = document.getElementById('messages');
     const el = document.createElement('div');
     el.className = 'message assistant';
-    const badgeHtml = _currentModelAlias ? `<div class="model-badge">${_currentModelAlias}</div>` : '';
+    const aiName = _currentModelAlias || 'Assistant';
     el.innerHTML = `
       <div class="avatar">AI</div>
-      <div class="bubble">
-        ${badgeHtml}
-        <div class="md-content">${marked.parse(content)}</div>
+      <div class="msg-content-wrap">
+        <div class="message-meta"><span class="assistant-label">${escapeHtml(aiName)}</span></div>
+        <div class="bubble">
+          <div class="md-content">${marked.parse(content)}</div>
+        </div>
       </div>
     `;
     container.appendChild(el);
@@ -2785,7 +2903,9 @@ function renderUserMessage(text) {
   el.className = 'message user';
   el.innerHTML = `
     <div class="avatar">You</div>
-    <div class="bubble">${escapeHtml(text)}</div>
+    <div class="msg-content-wrap">
+      <div class="bubble">${escapeHtml(text)}</div>
+    </div>
   `;
   container.appendChild(el);
   scrollToBottom();
@@ -4203,22 +4323,6 @@ function getModelAlias(modelName) {
   // Extract last part after /
   const parts = modelName.split('/');
   return parts[parts.length - 1] || modelName;
-}
-
-function toggleToolOutput(id) {
-  const el = document.getElementById(id);
-  const icon = document.getElementById(`${id}-icon`);
-  if (!el || !icon) return;
-  
-  if (el.classList.contains('collapsed')) {
-    // Currently collapsed, expand
-    el.classList.remove('collapsed');
-    icon.textContent = '▼';
-  } else {
-    // Currently expanded, collapse
-    el.classList.add('collapsed');
-    icon.textContent = '▶';
-  }
 }
 
 // ── Agent Templates (移植自 qaimodelbuilder) ─────────────────

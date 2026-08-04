@@ -1273,7 +1273,8 @@ async function handleDirectExecution(ws, session, toolCall, rawInput) {
   history.push({ role: 'user', content: rawInput });
 
   const toolName = toolCall.name || 'shell_execute';
-  broadcast(ws, { type: 'tool_call', tool: toolName, args: toolCall.arguments });
+  const directCallId = toolCall.id || `call_direct_${Date.now()}`;
+  broadcast(ws, { type: 'tool_call', tool: toolName, args: toolCall.arguments, callId: directCallId });
 
   const result = await executeTool(toolCall);
 
@@ -1281,6 +1282,7 @@ async function handleDirectExecution(ws, session, toolCall, rawInput) {
     type: 'tool_result',
     success: result.success,
     output: result.output,
+    callId: directCallId,
   });
 
   const answer = `## Execution Result\n\n${result.output}`;
@@ -1324,11 +1326,12 @@ async function handleSkillExecution(ws, session, userMessage) {
   } catch { /* 纯文本输入，cmdInput 保持原文 */ }
 
   const skill = skillLoader.get(skillName);
+  const skillCallId = `call_skill_${skillName}_${Date.now()}`;
   if (!skill) {
     const available = skillLoader.getAll().map(s => s.name).join(', ');
     const msgText = `Skill 未找到: ${skillName}\n\n可用的 skills: ${available}`;
-    broadcast(ws, { type: 'tool_call', tool: 'skill', args: { skill: skillName } });
-    broadcast(ws, { type: 'tool_result', success: false, output: msgText });
+    broadcast(ws, { type: 'tool_call', tool: 'skill', args: { skill: skillName }, callId: skillCallId });
+    broadcast(ws, { type: 'tool_result', success: false, output: msgText, callId: skillCallId });
     history.push({ role: 'assistant', content: msgText });
     broadcast(ws, { type: 'done', content: msgText, subtasks: [] });
     return;
@@ -1339,6 +1342,7 @@ async function handleSkillExecution(ws, session, userMessage) {
     type: 'tool_call',
     tool: 'skill',
     args: { skill: skillName, input: typeof cmdInput === 'string' ? cmdInput : JSON.stringify(cmdInput) },
+    callId: skillCallId,
   });
 
   const skillDir = path.dirname(skill.path);
@@ -1350,6 +1354,7 @@ async function handleSkillExecution(ws, session, userMessage) {
       type: 'tool_result',
       success: true,
       output: `Skill "${skillName}" 无直接可执行命令，转交 Agent 循环按指引执行...`,
+      callId: skillCallId,
     });
     await runSkillViaAgentLoop(ws, session, skillName);
     return;
@@ -1368,7 +1373,7 @@ async function handleSkillExecution(ws, session, userMessage) {
     });
     if (stderr) console.warn(`[Skill] ${skillName} stderr:`, stderr);
     const output = stdout || 'Skill 执行完成（无输出）';
-    broadcast(ws, { type: 'tool_result', success: true, output: truncateToolResult(output) });
+    broadcast(ws, { type: 'tool_result', success: true, output: truncateToolResult(output), callId: skillCallId });
 
     // 用 LLM 把原始执行结果转成自然语言总结，作为最终回答（原始结果已在 tool_result 透明展示）
     let answer = `## Skill 执行结果: ${skillName}\n\n${output}`;
@@ -1390,7 +1395,7 @@ async function handleSkillExecution(ws, session, userMessage) {
   } catch (err) {
     const msgText = `Skill 执行失败: ${err.message}`;
     console.error(`[Skill] Error executing ${skillName}:`, err);
-    broadcast(ws, { type: 'tool_result', success: false, output: msgText });
+    broadcast(ws, { type: 'tool_result', success: false, output: msgText, callId: skillCallId });
     history.push({ role: 'assistant', content: msgText });
     broadcast(ws, { type: 'done', content: msgText, subtasks: [] });
   }
@@ -1614,7 +1619,8 @@ function detectStockPriceQuery(text) {
 
 // 硬路由执行：调真实工具拿数据 → 让模型基于真实数据做自然语言总结（无权编造）
 async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMessage) {
-  broadcast(ws, { type: 'tool_call', tool: 'stock_price', args: { symbol: q.symbol } });
+  const stockCallId = `call_stock_${q.symbol}_${Date.now()}`;
+  broadcast(ws, { type: 'tool_call', tool: 'stock_price', args: { symbol: q.symbol }, callId: stockCallId });
   let res;
   try {
     res = await toolRegistry.execute({ name: 'stock_price', arguments: { symbol: q.symbol } });
@@ -1626,14 +1632,14 @@ async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMess
 
   if (errMsg) {
     const out = `抱歉，暂时无法获取 ${q.symbol} 的实时行情数据（${errMsg}）。请稍后重试或检查网络连通性。`;
-    broadcast(ws, { type: 'tool_result', success: false, output: out });
+    broadcast(ws, { type: 'tool_result', success: false, output: out, callId: stockCallId });
     history.push({ role: 'assistant', content: out });
     broadcast(ws, { type: 'done', content: out, subtasks: [{ id: 'stock_price', title: `查询 ${q.symbol} 行情`, status: 'done' }] });
     return;
   }
 
   // 透明展示真实原始结果
-  broadcast(ws, { type: 'tool_result', success: true, output: JSON.stringify(data, null, 2) });
+  broadcast(ws, { type: 'tool_result', success: true, output: JSON.stringify(data, null, 2), callId: stockCallId });
 
   // 用 LLM 基于【真实数据】做自然语言总结；prompt 强制"原样使用数字、严禁编造、说明数据来源工具"
   const summaryPrompt = [
@@ -1946,11 +1952,11 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
           for (const [name, , callId] of kev.toolMetas) {
             if (name === 'agent') continue;
             const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
-            broadcast(ws, { type: 'tool_call', tool: name, args });
+            broadcast(ws, { type: 'tool_call', tool: name, args, callId });
             executedTools.push({ id: callId, title: `${name}`, status: 'running' });
           }
         } else if (kev.kind === 'tool_result') {
-          broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText });
+          broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText, callId: kev.callId });
           toolResultsText.push(kev.resultText || '');
         } else if (kev.kind === 'error') {
           return { content: '', executedTools, error: kev.message };
@@ -2170,7 +2176,7 @@ async function runMainAgentTool(args, { ws, session, llmConfig, callId }) {
   const start = Date.now();
   const description = args.description || args.prompt || '';
   // 立即给出"派生子 Agent"卡片
-  broadcast(ws, { type: 'tool_call', tool: 'agent', args: { description: description.slice(0, 200), name: args.name || null } });
+  broadcast(ws, { type: 'tool_call', tool: 'agent', args: { description: description.slice(0, 200), name: args.name || null }, callId });
   let final = '[sub-agent produced no output]';
   let ok = true;
   try {
@@ -2190,7 +2196,7 @@ async function runMainAgentTool(args, { ws, session, llmConfig, callId }) {
     ok = false;
   }
   const resultText = truncateToolResult(identity.filterOutput(final));
-  broadcast(ws, { type: 'tool_result', success: ok, output: resultText });
+  broadcast(ws, { type: 'tool_result', success: ok, output: resultText, callId });
   return { partial: false, callId, toolName: 'agent', resultText, ok, durationMs: Date.now() - start };
 }
 
@@ -2208,7 +2214,7 @@ async function runSkillTool(args, callId, { ws, session }) {
     const ok = result.success !== false;
     const raw = result.output != null ? String(result.output) : (result.error || '');
     const resultText = `## 深度检索结果（已通过 web_search 真实检索）\n\n${truncateToolResult(identity.filterOutput(raw))}`;
-    broadcast(ws, { type: 'tool_result', success: ok, output: resultText });
+    broadcast(ws, { type: 'tool_result', success: ok, output: resultText, callId });
     return { partial: false, callId, toolName: 'web_search', resultText, ok, durationMs: Date.now() - start };
   }
   const skill = skillLoader.get(name);
@@ -2390,12 +2396,12 @@ function adaptKernelEventToWs(kev, { ws, executedTools }) {
       for (const [name, , callId] of kev.toolMetas) {
         if (name === 'agent') continue;
         const args = kev.toolMetas.find((m) => m[2] === callId)?.[1] || {};
-        if (ws) broadcast(ws, { type: 'tool_call', tool: name, args });
+        if (ws) broadcast(ws, { type: 'tool_call', tool: name, args, callId });
         executedTools.push({ id: callId, title: `${name}(${JSON.stringify(args).slice(0, 80)})`, status: 'running' });
       }
       return null;
     case 'tool_result':
-      return { type: 'tool_result', success: kev.ok, output: kev.resultText };
+      return { type: 'tool_result', success: kev.ok, output: kev.resultText, callId: kev.callId };
     case 'finished':
       return null; // 由 done 收尾
     case 'max_rounds_reached':
