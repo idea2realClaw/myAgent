@@ -149,6 +149,7 @@ export class SingleAgentTurnKernel {
     forwardToolCallsInline = false,
     assistantTimestamp = null,
     startRound = 1,
+    tokenBudget = null,
   }) {
     for (let roundNo = startRound; roundNo < startRound + maxRounds; roundNo++) {
       // ① abort 检查
@@ -161,6 +162,7 @@ export class SingleAgentTurnKernel {
       const rebuilt = await maybeCompressWire(wireMessages, {
         modelHint,
         thresholdRatio: this._compressThresholdRatio,
+        ...(tokenBudget ? { tokenBudget } : {}),
       });
       if (rebuilt !== wireMessages) {
         wireMessages.length = 0;

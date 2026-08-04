@@ -35,7 +35,7 @@ import { runDiscussion } from './discussion-manager.js';
 import { experienceStore } from './experience-store.js';
 import { GuardrailController } from './guardrail.js';
 import { compressWireIfNeeded } from './context-compressor.js';
-import { truncateToolResult, estimateWireTokens } from './context-manager.js';
+import { truncateToolResult, estimateWireTokens, estimateTokens, resolveModelContextWindow, trimHistoryToBudget, contextUsageSnapshot, CONTEXT_USAGE_TARGET_RATIO } from './context-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
 import { PermissionManager } from './permission-manager.js';
 import { AgentsMdLoader } from './agents-md-loader.js';
@@ -1143,14 +1143,46 @@ wss.on('connection', (ws) => {
       session.config = { ...session.config, ...msg.config };
       saveConfig(session.config);
       broadcast(ws, { type: 'config_saved' });
+      // 模型可能变更 → 重新广播上下文使用情况（新模型的窗口大小）
+      try {
+        const cfg = session.config;
+        const tokenBudget = await resolveModelContextWindow(cfg);
+        const system = buildSystemPrompt(cfg.provider);
+        const systemTokens = estimateTokens(system);
+        const trim = trimHistoryToBudget(session.history || [], { tokenBudget, systemTokens, ratio: CONTEXT_USAGE_TARGET_RATIO });
+        const usage = contextUsageSnapshot({ history: trim.history, systemTokens, tokenBudget, droppedTurns: trim.droppedTurns });
+        usage.model = cfg.model || 'unknown';
+        broadcast(ws, { type: 'context_usage', ...usage });
+      } catch { /* ignore */ }
     } else if (msg.type === 'clear_history') {
       session.history = [];
       broadcast(ws, { type: 'history_cleared' });
+      try {
+        const cfg = session.config || loadConfig();
+        const tokenBudget = await resolveModelContextWindow(cfg);
+        const system = buildSystemPrompt(cfg.provider);
+        const usage = contextUsageSnapshot({ history: [], systemTokens: estimateTokens(system), tokenBudget, droppedTurns: 0 });
+        usage.model = cfg.model || 'unknown';
+        broadcast(ws, { type: 'context_usage', ...usage });
+      } catch { /* ignore */ }
     } else if (msg.type === 'restore_history') {
-      // Restore history from client
+      // Restore history from client（切换会话时前端把当前会话的完整历史注入后端）
       if (msg.history && Array.isArray(msg.history)) {
-        session.history = msg.history;
-        broadcast(ws, { type: 'history_restored', count: msg.history.length });
+        session.history = msg.history.filter((m) => m && typeof m.content === 'string' && ['user', 'assistant', 'system'].includes(m.role));
+        broadcast(ws, { type: 'history_restored', count: session.history.length });
+        // 立即广播上下文使用情况（模型窗口多大 / 会话已用多少）
+        try {
+          const cfg = session.config || loadConfig();
+          const tokenBudget = await resolveModelContextWindow(cfg);
+          const system = buildSystemPrompt(cfg.provider);
+          const systemTokens = estimateTokens(system);
+          const trim = trimHistoryToBudget(session.history, { tokenBudget, systemTokens, ratio: CONTEXT_USAGE_TARGET_RATIO });
+          const usage = contextUsageSnapshot({ history: trim.history, systemTokens, tokenBudget, droppedTurns: trim.droppedTurns });
+          usage.model = cfg.model || 'unknown';
+          broadcast(ws, { type: 'context_usage', ...usage });
+        } catch (e) {
+          console.warn('[restore_history] context usage broadcast failed:', e.message);
+        }
       }
     } else if (msg.type === 'reload_skills') {
       skillLoader.load();
@@ -1676,11 +1708,44 @@ async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMess
   broadcast(ws, { type: 'done', content: answer, subtasks: [{ id: 'stock_price', title: `查询 ${q.symbol} 行情`, status: 'done' }] });
 }
 
-function buildLLMMessages(system, history) {
-  return [
-    { role: 'system', content: system },
-    ...history.slice(-10),
-  ];
+// ============================================================
+// 上下文大小管理（参考 qai-appbuilder：模型窗口解析 + 已用量展示 + 超阈值裁剪）
+// 规则（用户指定）：把当前会话的完整历史注入模型上下文；
+// 若 system+history 超过模型上下文的 70%，丢弃最早的一轮对话
+// （user 提问 + assistant 回答），循环直到达标。
+// ============================================================
+
+/**
+ * 按模型上下文预算构建 wire：[system, ...裁剪后的历史]。
+ * 同时向该会话广播 context_usage 事件（模型窗口多大 / 会话已用多少 / 丢弃了几轮），
+ * 供前端顶栏徽章展示。
+ *
+ * @returns {Promise<{ wire: Array, usage: object }>}
+ */
+async function buildBudgetedWire({ system, history, config, ws = null, logTag = 'ContextManager' }) {
+  // 1) 解析模型上下文窗口（配置覆盖 → OpenRouter API → 启发式 → 默认 128k）
+  let tokenBudget;
+  try {
+    tokenBudget = await resolveModelContextWindow(config);
+  } catch (e) {
+    console.warn(`[${logTag}] resolveModelContextWindow failed: ${e.message}`);
+    tokenBudget = 128000;
+  }
+
+  const systemTokens = estimateTokens(system || '');
+
+  // 2) 超 70% 预算时从最早一轮对话开始丢弃（user+assistant 成对）
+  const trim = trimHistoryToBudget(history, { tokenBudget, systemTokens, ratio: CONTEXT_USAGE_TARGET_RATIO });
+  if (trim.droppedTurns > 0) {
+    console.log(`[${logTag}] 上下文超 ${Math.round(CONTEXT_USAGE_TARGET_RATIO * 100)}% 预算，丢弃最早 ${trim.droppedTurns} 轮对话（估算 ${trim.tokens}/${tokenBudget} tokens）`);
+  }
+
+  // 3) 使用情况快照 → 广播给前端展示
+  const usage = contextUsageSnapshot({ history: trim.history, systemTokens, tokenBudget, droppedTurns: trim.droppedTurns });
+  usage.model = config.model || 'unknown';
+  if (ws) broadcast(ws, { type: 'context_usage', ...usage });
+
+  return { wire: [{ role: 'system', content: system }, ...trim.history], usage };
 }
 
 // ============================================================
@@ -1699,8 +1764,9 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
   };
   subAgentManager.llmConfig = llmConfig;
 
-  // 1) 播种 wire（system + 历史），内核会原地增长它
-  const wire = [{ role: 'system', content: system }, ...history.slice(-10)];
+  // 1) 播种 wire（system + 完整会话历史，按模型上下文 70% 预算裁剪），内核会原地增长它
+  const { wire, usage } = await buildBudgetedWire({ system, history, config: llmConfig, ws, logTag: 'AgentLoop' });
+  console.log(`[AgentLoop] 上下文注入: 历史 ${usage.messageCount} 条消息, 估算 ${usage.usedTokens}/${usage.modelTokens} tokens (${usage.percent}%)${usage.droppedTurns ? `, 已丢弃最早 ${usage.droppedTurns} 轮` : ''}`);
 
   // 2) toolExecutor / buildToolMetas 不依赖是否带工具，复用
   const toolExecutor = (roundNo, toolMetas) => makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfig });
@@ -1732,6 +1798,7 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
         maxRounds: config.maxRounds || 16,
         abortCheck: () => session.stopRequested === true,
         modelHint: llmConfig.model,
+        tokenBudget: usage.modelTokens || null,
       })) {
         if (kev.kind === 'tool_result') toolResultsText.push(kev.resultText);
         const mapped = adaptKernelEventToWs(kev, { ws: buffer ? null : ws, executedTools });
@@ -2020,6 +2087,15 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   const research = isResearchQuestion(question);
   console.log(`[PlannedLoop] 原始问题: ${question}`);
   console.log(`[PlannedLoop] 研究型问题(需多次联网检索): ${research}`);
+
+  // 上下文预算：解析一次模型窗口，子任务 wire 播种时按 70% 预算裁剪历史
+  let tokenBudget = 128000;
+  try {
+    tokenBudget = await resolveModelContextWindow(config);
+  } catch (e) {
+    console.warn(`[PlannedLoop] resolveModelContextWindow failed: ${e.message}`);
+  }
+
   const MAX_ITER = config.maxPlanIterations || 3;
   const allExecuted = [];
   let context = '';
@@ -2052,9 +2128,15 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
       if (session.stopRequested) { broadcast(ws, { type: 'subtask_error', taskId: item.id, title: item.title, message: '已停止' }); break; }
       broadcast(ws, { type: 'subtask_start', taskId: item.id, title: item.title });
       console.log(`[PlannedLoop] 子任务[${item.id}] 开始: ${item.title}`);
+      // 子任务 wire：system + 按 70% 预算裁剪的完整会话历史 + 子任务指令
+      const subTrim = trimHistoryToBudget(history, {
+        tokenBudget,
+        systemTokens: estimateTokens(systemForRun || ''),
+        ratio: CONTEXT_USAGE_TARGET_RATIO,
+      });
       const wire = [
         { role: 'system', content: systemForRun },
-        ...history.slice(-6),
+        ...subTrim.history,
         {
           role: 'user',
           content: `请完成以下子任务并直接给出结果（可调用工具获取真实数据，禁止编造）：\n【子任务】${item.title}\n\n这是为回答原始问题「${question}」而分解出的一步。` +

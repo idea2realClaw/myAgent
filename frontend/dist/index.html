@@ -201,6 +201,13 @@
       padding: 3px 10px; border-radius: 20px; font-size: 0.6875rem; font-weight: 600;
       background: var(--bg4); color: var(--accent2); border: 1px solid var(--border);
     }
+    #topbar .context-badge {
+      padding: 3px 10px; border-radius: 20px; font-size: 0.6875rem; font-weight: 600;
+      background: var(--bg4); color: var(--text2); border: 1px solid var(--border);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    #topbar .context-badge.warn { color: var(--yellow); border-color: var(--yellow); }
+    #topbar .context-badge.danger { color: var(--red); border-color: var(--red); }
 
     /* ── Sidebar ─────────────────────────────────────────── */
     #sidebar {
@@ -1433,6 +1440,7 @@
       MyAgent
     </div>
     <span id="provider-badge" class="provider-badge">OpenAI</span>
+    <span id="context-badge" class="context-badge" style="display:none" title="模型上下文窗口 / 当前会话已用">ctx –</span>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
       <span class="status-text" id="status-text">Connecting...</span>
       <div class="status-dot" id="status-dot"></div>
@@ -2374,7 +2382,12 @@ function handleMessage(msg) {
 
   // ── History restore ─────────────────────────
   else if (type === 'history_restored') {
-    showToast(`Restored ${msg.count} history messages`, 'success');
+    appendLog('info', `📜 已向后端注入 ${msg.count} 条会话历史`);
+  }
+
+  // ── 上下文使用情况（模型窗口 / 会话已用量）───────────
+  else if (type === 'context_usage') {
+    updateContextBadge(msg);
   }
 
   // ── Undo/Redo results ─────────────────────
@@ -3960,6 +3973,47 @@ function closeAllPanels() {
 let currentConversationId = null;
 let _currentStreamConversationId = null; // Track which conversation a streaming response belongs to
 let conversations = {};
+
+// ── 上下文大小管理（模型窗口 / 会话已用量展示 + 切换会话时注入后端）──
+function fmtTokens(n) {
+  if (!n && n !== 0) return '–';
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+function updateContextBadge(usage) {
+  const badge = document.getElementById('context-badge');
+  if (!badge) return;
+  if (!usage || !usage.modelTokens) {
+    badge.style.display = 'none';
+    return;
+  }
+  badge.style.display = '';
+  const pct = usage.percent || 0;
+  const dropped = usage.droppedTurns ? `（已丢弃最早 ${usage.droppedTurns} 轮）` : '';
+  badge.textContent = `ctx ${fmtTokens(usage.usedTokens)} / ${fmtTokens(usage.modelTokens)} (${pct}%)`;
+  badge.title = `模型: ${usage.model || ''}\n上下文窗口: ${usage.modelTokens.toLocaleString()} tokens\n当前会话已用: ${usage.usedTokens.toLocaleString()} tokens (${pct}%)\n消息数: ${usage.messageCount}${dropped}\n规则: 超过 70% 时自动丢弃最早的一轮对话`;
+  badge.classList.toggle('warn', pct >= 50 && pct < 70);
+  badge.classList.toggle('danger', pct >= 70);
+}
+
+// 从会话数据提取可注入后端的对话历史（仅 user/assistant/system 纯文本消息）
+function convHistoryForRestore(convId) {
+  const conv = conversations[convId];
+  if (!conv || !Array.isArray(conv.messages)) return [];
+  return conv.messages
+    .filter(m => m && typeof m.content === 'string' && ['user', 'assistant', 'system'].includes(m.role))
+    .map(m => ({ role: m.role, content: m.content }));
+}
+
+// 把当前会话的完整历史注入后端上下文（切换会话 / 页面加载时调用）
+function restoreHistoryToBackend(convId) {
+  if (!wsReady || !convId) return;
+  const history = convHistoryForRestore(convId);
+  ws.send(JSON.stringify({ type: 'restore_history', history }));
+  console.log(`[Context] Restored ${history.length} history messages to backend for conversation: ${convId}`);
+}
 
 function showChat() {
   // Close all panels
