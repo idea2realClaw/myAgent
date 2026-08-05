@@ -2075,6 +2075,8 @@ function connect() {
     wsReady = true;
     setStatus('connected', 'Connected');
     startHeartbeat();
+    // 重连/刷新后后端 session 是空的 → 把当前会话完整历史注入，恢复模型记忆
+    if (currentConversationId) restoreHistoryToBackend(currentConversationId);
   }
 
   ws.onclose = () => {
@@ -4069,6 +4071,9 @@ function selectChat(chatId) {
   
   // Close all panels
   showChat();
+
+  // 切换会话 → 把该会话完整历史注入后端上下文（后端 session 是单会话内存）
+  restoreHistoryToBackend(chatId);
 }
 
 function deleteChat(chatId, event) {
