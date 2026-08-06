@@ -526,6 +526,11 @@
       flex: 1; overflow-y: auto; padding: var(--space-5);
       display: flex; flex-direction: column; gap: var(--space-4);
     }
+    /* 关键修复: flex 列子项默认 flex-shrink:1，当已有内容撑过容器高度时，
+       浏览器会把最后追加的子项(工具面板/气泡)压到接近 0 高度，
+       配合 .tool-exec-panel 的 overflow:hidden 就塌成一条线。
+       禁止收缩，由 #messages 的 overflow-y:auto 负责滚动。 */
+    #messages > * { flex-shrink: 0; }
 
     /* ── Message bubbles (QAI ChatStream 风格: 居中列、min(800px,85%) 宽) ── */
     .message { display: flex; gap: var(--space-3); max-width: min(800px, 85%); width: 100%; margin: 0 auto; }
@@ -2559,6 +2564,30 @@ function toolArgsText(tool, args) {
   return JSON.stringify(args, null, 2);
 }
 
+function logPanelRect(el, tag) {
+  if (!el || typeof el.getBoundingClientRect !== 'function') return;
+  requestAnimationFrame(function () {
+    var r = el.getBoundingClientRect();
+    var corners = {
+      TL: { x: Math.round(r.left), y: Math.round(r.top) },
+      TR: { x: Math.round(r.right), y: Math.round(r.top) },
+      BR: { x: Math.round(r.right), y: Math.round(r.bottom) },
+      BL: { x: Math.round(r.left), y: Math.round(r.bottom) }
+    };
+    var line = '[ToolPanel:' + tag + '] size=' + Math.round(r.width) + 'x' + Math.round(r.height) +
+      ' rect(top=' + Math.round(r.top) + ' left=' + Math.round(r.left) + ' right=' + Math.round(r.right) + ' bottom=' + Math.round(r.bottom) + ')' +
+      ' corners=' + JSON.stringify(corners) +
+      ' messagesWidth=' + (document.getElementById('messages') ? Math.round(document.getElementById('messages').clientWidth) : 'n/a');
+    console.log(line);
+    try {
+      fetch('/api/clientlog', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: tag, width: r.width, height: r.height, corners: corners }), keepalive: true
+      });
+    } catch (e) { /* endpoint optional, browser console already has it */ }
+  });
+}
+
 function renderToolCall(tool, args, callId) {
   hideWelcome();
   const container = document.getElementById('messages');
@@ -2603,6 +2632,7 @@ function renderToolCall(tool, args, callId) {
   if (callId) toolPanelMap.set(callId, el);
   toolPanelStack.push(el);
   scrollToBottom();
+  logPanelRect(el, 'call');
 }
 
 function toggleToolPanel(headerEl) {
@@ -2655,6 +2685,7 @@ function renderToolResult(success, output, callId) {
   const pre = el.querySelector('.tool-exec-output-pre');
   if (pre) pre.textContent = outputStr || '(no output)';
   scrollToBottom();
+  logPanelRect(el, 'result');
 }
 
 // 找不到配对 Panel 时的兑底（独立卡片）
@@ -2684,6 +2715,7 @@ function renderToolResultFallback(success, output) {
   `;
   container.appendChild(el);
   scrollToBottom();
+  logPanelRect(el, 'fallback');
 }
 
 function renderPlanCard(plan) {

@@ -790,6 +790,20 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
 });
 
+// Frontend debug relay: browser-side layout rects land here so they show up
+// in the server log (logs/agent-webui-server.log) for debugging UI issues.
+app.post('/api/clientlog', (req, res) => {
+  const ip = req.socket.remoteAddress || '';
+  const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!isLocal) return res.status(403).json({ error: 'forbidden' });
+  const body = req.body || {};
+  const tag = body.tag || '?';
+  const rect = body.corners || {};
+  const w = body.width, h = body.height;
+  console.log(`[CLIENTLOG] tag=${tag} size=${Math.round(w)}x${Math.round(h)} corners=${JSON.stringify(rect)}`);
+  res.json({ ok: true });
+});
+
 // Self-restart endpoint (no daemon / no extra port).
 // The single server process re-executes itself on the same files.
 // Restricted to localhost + same-origin to block cross-site CSRF.
