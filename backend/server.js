@@ -77,21 +77,45 @@ function logToFile(level, ...args) {
   const message = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
   const line = `[${timestamp}] [${level}] ${message}\n`;
   try {
-    logFile.write(line);
-    if (level === 'error') logFileError.write(line);
+    if (!logFile.destroyed) {
+      logFile.write(line, (err) => {
+        if (err && !logFile.destroyed) {
+          // Best-effort: log stream broken (e.g. stdout pipe closed). Do not crash.
+          try { origError('[Logging] Failed to write to log file:', err.message); } catch {}
+        }
+      });
+    }
+    if (level === 'error' && !logFileError.destroyed) {
+      logFileError.write(line, (err) => {
+        if (err && !logFileError.destroyed) {
+          try { origError('[Logging] Failed to write to error log file:', err.message); } catch {}
+        }
+      });
+    }
   } catch (err) {
-    origError('[Logging] Failed to write to log file:', err.message);
+    try { origError('[Logging] Failed to write to log file:', err.message); } catch {}
   }
 }
 
-// Override console methods to also write to file
+// Override console methods to also write to file.
+// These wrappers intentionally swallow logging errors (EPIPE/EBADF) so that
+// losing the stdout pipe or log stream never crashes the agent loop.
 const origLog = console.log;
 const origWarn = console.warn;
 const origError = console.error;
 
-console.log = (...args) => { origLog(...args); logToFile('info', ...args); };
-console.warn = (...args) => { origWarn(...args); logToFile('warn', ...args); };
-console.error = (...args) => { origError(...args); logToFile('error', ...args); };
+console.log = (...args) => {
+  try { origLog(...args); } catch {}
+  try { logToFile('info', ...args); } catch {}
+};
+console.warn = (...args) => {
+  try { origWarn(...args); } catch {}
+  try { logToFile('warn', ...args); } catch {}
+};
+console.error = (...args) => {
+  try { origError(...args); } catch {}
+  try { logToFile('error', ...args); } catch {}
+};
 
 // ============================================================
 // Config persistence
