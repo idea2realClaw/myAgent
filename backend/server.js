@@ -1599,6 +1599,14 @@ const STOCK_STOP_WORDS = new Set([
   'CODE', 'DATA', 'TYPE', 'NAME', 'TEXT', 'JSON', 'HTML', 'URL', 'HTTP', 'SHELL', 'QUERY', 'TEST',
   'TRUE', 'FALSE', 'NULL', 'NONE', 'ALL', 'RMB', 'USD', 'CNY', 'HKD', 'EUR', 'JPY', 'BTC', 'ETH',
   'STOCK', 'QUOTE', 'TICKER', 'NASDAQ', 'PRICES', 'ETF',
+  // 常见英文/技术缩写（防止"X 价格"把普通词误当代码）
+  'DEMO', 'INFO', 'TODO', 'NOTE', 'USER', 'TIME', 'DATE', 'YEAR', 'WEEK', 'MONTH', 'DAY',
+  'FORM', 'CSS', 'JS', 'SQL', 'XML', 'YAML', 'LOG', 'ENV', 'KEY', 'MAP', 'PUT', 'POST', 'HEAD',
+  'BODY', 'HOST', 'PORT', 'PATH', 'ROOT', 'BASE', 'MAIN', 'INIT', 'BUILD', 'RUN', 'EXIT', 'LOOP',
+  'NODE', 'EDGE', 'AWS', 'GCP', 'CLI', 'SSH', 'TLS', 'SSL', 'TCP', 'UDP', 'IP', 'DNS', 'MAC',
+  'RAM', 'GPU', 'CPU', 'SSD', 'HDD', 'ROM', 'BIOS', 'OS', 'VM', 'DB', 'IO', 'UI', 'UX',
+  'ML', 'DL', 'NN', 'CV', 'NLP', 'PDF', 'PNG', 'JPG', 'GIF', 'SVG', 'CSV', 'ZIP', 'TAG', 'ID',
+  'SYS', 'PRO', 'CON', 'COM', 'NET', 'ORG', 'DEV', 'OPS', 'SRE', 'QA', 'CI', 'CD', 'INC', 'LTD',
 ]);
 // 中文股票名 → 代码
 const STOCK_NAME_MAP = {
@@ -1630,7 +1638,7 @@ function detectStockPriceQuery(text) {
   const cmdMatch = work.match(/^\/stock[-_]?price\b\s*/i);
   if (cmdMatch) work = work.slice(cmdMatch[0].length).trim();
   const lower = work.toLowerCase();
-  const isPriceIntent = /(价格|股价|行情|报价|涨跌|市值|多少|实时|净值|基金)/.test(lower)
+  const isPriceIntent = /(价格|股价|行情|报价|涨跌|市值|实时|净值|基金)/.test(lower)
     || /\b(price|quote|stock|etf|ticker|nasdaq)\b/.test(lower)
     || cmdMatch != null;
   // 1) 中文名映射
@@ -1656,10 +1664,12 @@ function detectStockPriceQuery(text) {
   // 数字/中文数字 + 时间单位（如"5日""近五个交易日""3个月""two weeks"）→ 视作历史/区间查询
   const numTimePattern = /(\d+|[一二三四五六七八九十两半]+)\s*(个)?\s*(天|日|周|星期|月|季度|年|交易日|days?|weeks?|months?|years?|trading\s*days?)/i;
   const hasLoop = STOCK_LOOP_WORDS.some((w) => lower.includes(w.toLowerCase())) || numTimePattern.test(lower);
-  // 必须含价格意图词或历史/分析词，才视作股票查询（避免把普通英文句里的缩写误判为股票）
-  if (!isPriceIntent && !hasLoop) return null;
-  // 含历史/时间区间/深度分析词 → 标记为 history，交由 Agent 循环理解并分解
-  // （如"过去五天""历史价格""走势"）：循环会调 stock_price(range=...) 取时间序列
+  // 硬路由 stock_price 仅当「明确的价格/行情意图」出现（价格/股价/行情/报价/涨跌/市值/实时/净值/基金，
+  // 或英文 price/quote/stock/etf/ticker/nasdaq）。没有明确价格意图时，即便含走势/分析词也【不】硬抢行情，
+  // 交给 Agent 循环处理（避免过度触发）；仅历史/区间类标记为 history 让循环取时间序列。
+  if (!isPriceIntent) {
+    return hasLoop ? { symbol, raw, history: true } : null;
+  }
   return { symbol, raw, history: hasLoop };
 }
 
@@ -1680,6 +1690,7 @@ async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMess
     const out = `抱歉，暂时无法获取 ${q.symbol} 的实时行情数据（${errMsg}）。请稍后重试或检查网络连通性。`;
     broadcast(ws, { type: 'tool_result', success: false, output: out, callId: stockCallId });
     history.push({ role: 'assistant', content: out });
+    await reportContextUsage({ ws, history, config: cfg, logTag: 'StockPrice' });
     broadcast(ws, { type: 'done', content: out, subtasks: [{ id: 'stock_price', title: `查询 ${q.symbol} 行情`, status: 'done' }] });
     return;
   }
@@ -1719,6 +1730,7 @@ async function handleStockPriceQuery(ws, session, history, llm, cfg, q, userMess
   }
 
   history.push({ role: 'assistant', content: answer });
+  await reportContextUsage({ ws, history, config: cfg, logTag: 'StockPrice' });
   broadcast(ws, { type: 'done', content: answer, subtasks: [{ id: 'stock_price', title: `查询 ${q.symbol} 行情`, status: 'done' }] });
 }
 
@@ -1760,6 +1772,33 @@ async function buildBudgetedWire({ system, history, config, ws = null, logTag = 
   if (ws) broadcast(ws, { type: 'context_usage', ...usage });
 
   return { wire: [{ role: 'system', content: system }, ...trim.history], usage };
+}
+
+/**
+ * 对话「完成后」基于最新 session.history 重新计算并广播上下文已用量。
+ * 修复：徽章只在回合开始（播种 wire）时广播，助手最终回复写入 history 后不再更新，
+ * 导致一直停在回合开始的值。此函数在 done 之前补播一次真实已用量，并在 log 打印已使用上下文。
+ */
+async function reportContextUsage({ ws, history, config, system, logTag = 'ContextUsage' }) {
+  const cfg = {
+    provider: config.provider || 'openrouter',
+    model: config.model,
+    baseURL: config.baseURL,
+    apiKey: config.apiKey,
+  };
+  let tokenBudget;
+  try {
+    tokenBudget = await resolveModelContextWindow(cfg);
+  } catch (e) {
+    tokenBudget = 128000;
+  }
+  const sysText = (system != null ? system : buildSystemPrompt(cfg.provider)) || '';
+  const systemTokens = estimateTokens(sysText);
+  const trim = trimHistoryToBudget(history || [], { tokenBudget, systemTokens, ratio: CONTEXT_USAGE_TARGET_RATIO });
+  const usage = contextUsageSnapshot({ history: trim.history, systemTokens, tokenBudget, droppedTurns: trim.droppedTurns });
+  usage.model = cfg.model || 'unknown';
+  if (ws) broadcast(ws, { type: 'context_usage', ...usage });
+  console.log(`[${logTag}] 对话完成·上下文已用: 历史 ${usage.messageCount} 条, 估算 ${usage.usedTokens}/${usage.modelTokens} tokens (${usage.percent}%)${usage.droppedTurns ? `, 已丢弃最早 ${usage.droppedTurns} 轮` : ''}`);
 }
 
 // ============================================================
@@ -1872,6 +1911,9 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
 
   // 写回历史
   history.push({ role: 'assistant', content: finalText });
+
+  // 对话完成 → 用最新 history 重算并广播上下文已用量（修复徽章不更新），同时 log 已使用上下文
+  await reportContextUsage({ ws, history, config: cfg, system, logTag: 'AgentLoop' });
 
   broadcast(ws, {
     type: 'done',
@@ -2239,6 +2281,8 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   }
 
   history.push({ role: 'assistant', content: finalText });
+  // 对话完成 → 用最新 history 重算并广播上下文已用量（修复徽章不更新），同时 log 已使用上下文
+  await reportContextUsage({ ws, history, config: cfg, system: systemForRun, logTag: 'PlannedLoop' });
   broadcast(ws, { type: 'done', content: finalText, subtasks: allExecuted });
 
   // ── 经验提炼（成功完成 → fire-and-forget，不阻塞回复）──
