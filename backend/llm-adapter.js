@@ -4,6 +4,20 @@
 // Features: Native function calling, structured stream events
 // ============================================================
 
+// 单次 LLM 调用的默认超时(毫秒)。provider 网络一旦挂起，没有超时会让
+// await llm.chat(...) 永远不返回——调用方(如 planDecompose 的"正在分解任务")
+// 会卡死。超时后抛错，由调用方 try/catch 兜底(退化为单一子任务)，状态得以推进。
+const DEFAULT_LLM_TIMEOUT_MS = 90000;
+
+// 超时熔断：包裹任意 promise，超时即 reject，避免调用方无限挂起。
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export class LLMAdapter {
   constructor(config) {
     this.config = config; // { provider, apiKey, model, baseURL? }
@@ -19,17 +33,21 @@ export class LLMAdapter {
 
   async chat(messages, options = {}) {
     const { provider } = this.config;
+    const ms = options.timeout ?? DEFAULT_LLM_TIMEOUT_MS;
 
+    let inner;
     if (provider === 'anthropic') {
-      return this._anthropicChat(messages, options);
+      inner = this._anthropicChat(messages, options);
     } else if (provider === 'qgenie') {
-      return this._qgenieChat(messages, options);
+      inner = this._qgenieChat(messages, options);
     } else if (provider === 'local') {
-      return this._localChat(messages, options);
+      inner = this._localChat(messages, options);
     } else {
       // OpenAI-compatible (openai + openrouter both use same API)
-      return this._openaiChat(messages, options);
+      inner = this._openaiChat(messages, options);
     }
+    // 统一超时熔断：即便 provider SDK 未正确处理底层超时，也保证 await 会返回/抛错。
+    return withTimeout(inner, ms, `llm.chat[${provider}]`);
   }
 
   async *stream(messages, options = {}) {
@@ -51,7 +69,7 @@ export class LLMAdapter {
     const { OpenAI } = await import('openai');
     const { apiKey, model, baseURL } = this.config;
 
-    const clientConfig = { apiKey };
+    const clientConfig = { apiKey, timeout: options.timeout ?? DEFAULT_LLM_TIMEOUT_MS };
     if (baseURL) clientConfig.baseURL = baseURL;
 
     const client = new OpenAI(clientConfig);
@@ -70,7 +88,7 @@ export class LLMAdapter {
     const { OpenAI } = await import('openai');
     const { apiKey, model, baseURL } = this.config;
 
-    const clientConfig = { apiKey };
+    const clientConfig = { apiKey, timeout: options.timeout ?? DEFAULT_LLM_TIMEOUT_MS };
     if (baseURL) clientConfig.baseURL = baseURL;
 
     const client = new OpenAI(clientConfig);
@@ -169,7 +187,7 @@ export class LLMAdapter {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const { apiKey, model } = this.config;
 
-    const client = new Anthropic({ apiKey });
+    const client = new Anthropic({ apiKey, timeout: options.timeout ?? DEFAULT_LLM_TIMEOUT_MS });
     // Separate system message from conversation
     const sysMsg = messages.find(m => m.role === 'system');
     const convMsgs = messages.filter(m => m.role !== 'system');
@@ -213,9 +231,11 @@ export class LLMAdapter {
   async _qgenieChat(messages, options) {
     const { apiKey, model, baseURL } = this.config;
     const url = `${baseURL || 'https://qgenie.example.com/v1'}/chat/completions`;
+    const ms = options.timeout ?? DEFAULT_LLM_TIMEOUT_MS;
 
     const response = await fetch(url, {
       method: 'POST',
+      signal: AbortSignal.timeout(ms),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey || 'dummy'}`,
@@ -293,9 +313,11 @@ export class LLMAdapter {
   async _localChat(messages, options) {
     const { model, baseURL } = this.config;
     const url = `${baseURL || 'http://127.0.0.1:8910/v1'}/chat/completions`;
+    const ms = options.timeout ?? DEFAULT_LLM_TIMEOUT_MS;
 
     const response = await fetch(url, {
       method: 'POST',
+      signal: AbortSignal.timeout(ms),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: model || 'local-default',

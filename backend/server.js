@@ -2123,7 +2123,13 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
     try {
       subtasks = await planDecompose(llm, question, context, iter, research);
     } catch (e) {
-      subtasks = iter === 1 ? [{ title: question }] : [];
+      console.error(`[PlannedLoop] 第${iter}轮分解失败(${e.message})，降级处理`);
+      if (iter === 1) {
+        broadcast(ws, { type: 'thinking', message: '⚠️ 任务分解超时，已降级为单次直接作答' });
+        subtasks = [{ title: question }];
+      } else {
+        subtasks = [];
+      }
     }
     if (!subtasks || subtasks.length === 0) break;
     console.log(`[PlannedLoop] 第${iter}轮分解(${subtasks.length}项): ${subtasks.map((s) => s.title).join(' | ')}`);
