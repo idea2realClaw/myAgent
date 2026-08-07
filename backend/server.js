@@ -1913,7 +1913,7 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
   history.push({ role: 'assistant', content: finalText });
 
   // 对话完成 → 用最新 history 重算并广播上下文已用量（修复徽章不更新），同时 log 已使用上下文
-  await reportContextUsage({ ws, history, config: cfg, system, logTag: 'AgentLoop' });
+  await reportContextUsage({ ws, history, config, system, logTag: 'AgentLoop' });
 
   broadcast(ws, {
     type: 'done',
@@ -2282,7 +2282,7 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
 
   history.push({ role: 'assistant', content: finalText });
   // 对话完成 → 用最新 history 重算并广播上下文已用量（修复徽章不更新），同时 log 已使用上下文
-  await reportContextUsage({ ws, history, config: cfg, system: systemForRun, logTag: 'PlannedLoop' });
+  await reportContextUsage({ ws, history, config, system: systemForRun, logTag: 'PlannedLoop' });
   broadcast(ws, { type: 'done', content: finalText, subtasks: allExecuted });
 
   // ── 经验提炼（成功完成 → fire-and-forget，不阻塞回复）──
