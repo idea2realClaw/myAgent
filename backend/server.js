@@ -741,8 +741,13 @@ function broadcast(ws, data) {
   if (data && (data.type === 'tool_call' || data.type === 'tool_result')) {
     try { ws.__toolCallsThisTurn = (ws.__toolCallsThisTurn || 0) + 1; } catch { /* ignore */ }
   }
-  if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(data));
+  try {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify(data));
+    }
+  } catch (err) {
+    // WS 可能刚断开或 pipe 已关闭；日志失败不能炸业务进程/Agent 循环
+    try { console.warn('[broadcast] failed to send message:', err.message); } catch {}
   }
 }
 
@@ -1176,6 +1181,10 @@ wss.on('connection', (ws) => {
     if (!session) return;
 
     if (msg.type === 'chat') {
+      // 前端在 WS 重连/刷新后会把本地完整历史带在 chat 消息里，覆盖后端可能为空的 session history
+      if (Array.isArray(msg.history) && msg.history.length > 0) {
+        session.history = msg.history.filter((m) => m && typeof m.content === 'string' && ['user', 'assistant', 'system'].includes(m.role));
+      }
       await handleChat(sessionId, session, msg);
     } else if (msg.type === 'config_update') {
       session.config = { ...session.config, ...msg.config };
@@ -2294,7 +2303,18 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   else broadcast(ws, { type: 'subtask_done', taskId: synthStageId, title: synthStageTitle });
   console.log(`[PlannedLoop] 汇总完成: 答案长度=${finalText.length}${synthError ? ' 错误=' + synthError : ''} 本轮真实工具=${[...session.__realToolNames].join(',') || '(无)'}`);
   if (!finalText) {
-    finalText = context.trim() || '抱歉，本轮未能获取有效结果，请重试或更换模型。';
+    // 汇总失败/超时：不要把几万字原始 context 直接塞给用户，而是给出结构化摘要 + 遗留问题
+    const snippets = context
+      .split('\n### 子任务：')
+      .slice(1)
+      .map((block) => {
+        const title = block.split('\n')[0].trim();
+        const evidence = block.match(/【web_search 等工具检索到的真实资料】\n([\s\S]{0,800})/);
+        return `- ${title}：${evidence ? evidence[1].replace(/\n/g, ' ').slice(0, 300) : '(未获得有效结果)'}`;
+      });
+    finalText = '汇总阶段超时或失败，但我已完成了子任务检索。以下是已收集的关键资料摘要：\n\n' +
+      (snippets.length ? snippets.join('\n') : '(未获得有效子任务结果)') +
+      '\n\n如需完整答案，可重试或缩短问题范围。';
     if (remaining.length) finalText += `\n\n⚠️ 遗留问题：\n- ${remaining.join('\n- ')}`;
   }
 

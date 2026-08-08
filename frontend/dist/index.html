@@ -3110,13 +3110,16 @@ function sendMessage() {
   document.getElementById('send-btn').style.display = 'none';
   document.getElementById('stop-btn').style.display = 'flex';
 
-  // Send message to backend with conversation ID
-  ws.send(JSON.stringify({
-    type: 'chat',
-    content: text,
-    conversationId: currentConversationId,
-    parallel: document.getElementById('parallel-toggle').checked,
-  }));
+  // Send message to backend with conversation ID and full local history
+   // 后端 session history 是纯内存且 WS 重连后会清空，附带历史可确保模型始终看到完整上下文
+   const chatHistory = currentConversationId ? convHistoryForRestore(currentConversationId) : [];
+   ws.send(JSON.stringify({
+     type: 'chat',
+     content: text,
+     conversationId: currentConversationId,
+     parallel: document.getElementById('parallel-toggle').checked,
+     history: chatHistory,
+   }));
 
   console.log(`[Conversation] Sending message to backend, conversationId: ${currentConversationId}`);
 
