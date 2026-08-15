@@ -2602,8 +2602,10 @@ function toolSubtitle(tool, args) {
   return '';
 }
 
-// 所有工具执行面板在 Chat Stream 中缺省折叠，避免长输出 / 多工具并行刷屏；点开 header 即可展开。
-const TOOL_PANEL_DEFAULT_COLLAPSED = true;
+// 工具面板在 Chat Stream 中的显示策略：
+// · 历史快照 / 兜底卡片 → 缺省折叠（保持整洁，点开 header 展开）
+// · 正在执行的工具（renderToolCall）→ 展开，让用户立即看到「执行中…」，避免空白等待；
+//   结果返回后由 renderToolResult 折叠（成功折叠 / 失败展开看错误）。
 
 function toolArgsText(tool, args) {
   if (!args) return '';
@@ -2651,8 +2653,9 @@ function renderToolCall(tool, args, callId) {
   el.dataset.pending = '1';
   if (callId) el.dataset.callId = callId;
   if (tool) el.dataset.tool = tool;
-  // 所有工具面板缺省折叠（见 TOOL_PANEL_DEFAULT_COLLAPSED）
-  const defaultCollapsed = TOOL_PANEL_DEFAULT_COLLAPSED;
+  // 工具被调用（正在执行）时展开面板，立即显示「执行中…」反馈，避免长时间空白等待；
+  // 结果返回后由 renderToolResult 折叠（成功折叠 / 失败展开看错误）。
+  const defaultCollapsed = false;
 
   const subtitle = toolSubtitle(tool, args);
   const subtitleHtml = subtitle
@@ -2743,6 +2746,16 @@ function renderToolResult(success, output, callId) {
 
   const pre = el.querySelector('.tool-exec-output-pre');
   if (pre) pre.textContent = outputStr || '(no output)';
+  // 执行完成：成功→折叠收起（保持整洁，点开 header 看输出）；失败→保持展开（便于查看错误）
+  const body = el.querySelector('.tool-exec-body');
+  const arrow = el.querySelector('.tool-exec-arrow');
+  if (success) {
+    if (body && !body.classList.contains('collapsed')) body.classList.add('collapsed');
+    if (arrow && !arrow.classList.contains('tool-exec-arrow--collapsed')) arrow.classList.add('tool-exec-arrow--collapsed');
+  } else {
+    if (body) body.classList.remove('collapsed');
+    if (arrow) arrow.classList.remove('tool-exec-arrow--collapsed');
+  }
   scrollToBottom();
   logPanelRect(el, 'result');
 }
