@@ -830,7 +830,7 @@ app.post('/api/clientlog', (req, res) => {
   const tag = body.tag || '?';
   const rect = body.corners || {};
   const w = body.width, h = body.height;
-  console.log(`[CLIENTLOG] tag=${tag} size=${Math.round(w)}x${Math.round(h)} corners=${JSON.stringify(rect)}`);
+  console.log(`[CLIENTLOG] tag=${tag} collapsed=${body.collapsed} size=${Math.round(w)}x${Math.round(h)} corners=${JSON.stringify(rect)}`);
   res.json({ ok: true });
 });
 

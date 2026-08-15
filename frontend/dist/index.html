@@ -2602,11 +2602,8 @@ function toolSubtitle(tool, args) {
   return '';
 }
 
-// 命令/代码执行类工具：输出通常很长，Chat Stream 中缺省折叠
-const COMMAND_TOOLS = new Set(['shell_execute', 'bash', 'bash_exec', 'exec', 'shell', 'python_execute']);
-function isCommandTool(tool) {
-  return COMMAND_TOOLS.has(tool);
-}
+// 所有工具执行面板在 Chat Stream 中缺省折叠，避免长输出 / 多工具并行刷屏；点开 header 即可展开。
+const TOOL_PANEL_DEFAULT_COLLAPSED = true;
 
 function toolArgsText(tool, args) {
   if (!args) return '';
@@ -2654,8 +2651,8 @@ function renderToolCall(tool, args, callId) {
   el.dataset.pending = '1';
   if (callId) el.dataset.callId = callId;
   if (tool) el.dataset.tool = tool;
-  // 命令/代码执行类工具缺省折叠，避免长输出刷屏
-  const cmdCollapsed = isCommandTool(tool);
+  // 所有工具面板缺省折叠（见 TOOL_PANEL_DEFAULT_COLLAPSED）
+  const defaultCollapsed = TOOL_PANEL_DEFAULT_COLLAPSED;
 
   const subtitle = toolSubtitle(tool, args);
   const subtitleHtml = subtitle
@@ -2678,10 +2675,10 @@ function renderToolCall(tool, args, callId) {
       </div>
       <div class="tool-exec-header-right">
         <span class="tool-exec-size-badge" style="display:none"></span>
-        <span class="tool-exec-arrow${cmdCollapsed ? ' tool-exec-arrow--collapsed' : ''}">▼</span>
+        <span class="tool-exec-arrow${defaultCollapsed ? ' tool-exec-arrow--collapsed' : ''}">▼</span>
       </div>
     </div>
-    <div class="tool-exec-body${cmdCollapsed ? ' collapsed' : ''}">
+    <div class="tool-exec-body${defaultCollapsed ? ' collapsed' : ''}">
       ${argsBlock}
       <div class="tool-exec-output">
         <div class="tool-exec-output-header"><span class="tool-exec-label">输出</span></div>
@@ -2768,7 +2765,7 @@ function renderToolResultFallback(success, output) {
         <span class="tool-exec-arrow">▼</span>
       </div>
     </div>
-    <div class="tool-exec-body">
+    <div class="tool-exec-body collapsed">
       <div class="tool-exec-output">
         <div class="tool-exec-output-header"><span class="tool-exec-label">输出</span></div>
         <pre class="tool-exec-output-pre">${escapeHtml(outputStr)}</pre>
@@ -4205,11 +4202,10 @@ function selectChat(chatId) {
       // 恢复完整聊天流快照（任务分解卡片、子任务面板、工具调用/结果等）
       hideWelcome();
       messages.innerHTML = conv.chatHtml;
-      // 历史快照兼容：命令执行类面板缺省折叠
+      // 历史快照兼容：所有工具执行面板缺省折叠
       // 折叠功能上线前保存的旧快照里这些面板是展开的，恢复时强制折叠；
       // 实时命令卡 exec-output-card 同样确保折叠态，与缺省行为一致。
       messages.querySelectorAll('.tool-exec-panel[data-tool]').forEach(panel => {
-        if (!isCommandTool(panel.dataset.tool)) return;
         const body = panel.querySelector('.tool-exec-body');
         const arrow = panel.querySelector('.tool-exec-arrow');
         if (body) body.classList.add('collapsed');
