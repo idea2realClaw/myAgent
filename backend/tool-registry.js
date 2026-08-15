@@ -192,6 +192,7 @@ class ToolRegistry {
             timeout: 30000,
             maxbuffer: 1024 * 1024 * 5,
             shell: true,
+            windowsHide: true, // 隐藏 Windows 子进程控制台窗口
             encoding: 'buffer', // capture raw bytes; decode with correct code page
             ...(signal ? { signal } : {}), // 停止时 abort 会 kill 子进程
           });
@@ -540,6 +541,7 @@ class ToolRegistry {
           const result = execSync(`"${pythonCmd}" ${tmpFile} ${args}`, {
             timeout: 30000,
             maxBuffer: 1024 * 1024,
+            windowsHide: true, // 隐藏 Windows 子进程控制台窗口
             encoding: 'buffer', // capture raw bytes; decode with correct code page
           });
           return { stdout: decodeShell(result).trim() };

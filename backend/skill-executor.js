@@ -135,6 +135,7 @@ export class SkillExecutor {
       const { stdout, stderr } = await execAsync(fullCmd, {
         maxBuffer: 10 * 1024 * 1024, // 10MB
         timeout: 120000, // 2 分钟
+        windowsHide: true, // 隐藏 Windows 子进程控制台窗口
         encoding: 'buffer', // capture raw bytes; decode with correct code page
       });
       if (stderr && stderr.length) {

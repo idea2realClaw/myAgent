@@ -30,7 +30,7 @@ function getOemDecoder() {
     try {
       // `chcp` prints "Active code page: 936" in the OEM code page;
       // the digits are ASCII-safe, so we can parse them out reliably.
-      const raw = execSync('chcp', { encoding: 'buffer' });
+      const raw = execSync('chcp', { encoding: 'buffer', windowsHide: true });
       const m = /(\d+)/.exec(raw.toString('latin1'));
       const cp = m ? parseInt(m[1], 10) : 936;
       const map = { 936: 'gbk', 950: 'big5', 932: 'shift_jis', 949: 'euc-kr', 65001: 'utf-8' };

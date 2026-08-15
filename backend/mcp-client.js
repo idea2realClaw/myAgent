@@ -76,6 +76,7 @@ export class MCPClient extends EventEmitter {
           env: { ...process.env, ...this.env },
           cwd: this.cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true, // 隐藏 MCP 子进程（如 npx 启动的 cmd 包装）控制台窗口
         });
       } catch (err) {
         return reject(err);

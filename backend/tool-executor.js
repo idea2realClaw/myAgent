@@ -41,6 +41,7 @@ export async function* execStream({ command, workdir, signal }) {
   const child = exec(command, {
     cwd,
     shell: true,
+    windowsHide: true, // 隐藏 Windows 子进程控制台窗口
     maxBuffer: 1024 * 1024 * 10, // 10MB
   });
 

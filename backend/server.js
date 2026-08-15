@@ -1006,6 +1006,7 @@ app.post('/api/skills/:name/run', async (req, res) => {
       cwd: skillDir,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120000,
+      windowsHide: true, // 隐藏 Windows 子进程控制台窗口
     });
     if (stderr) console.warn(`[Skill API] ${skillName} stderr:`, stderr);
     res.json({ success: true, skill: skillName, command: fullCmd, output: stdout || '' });
@@ -1474,6 +1475,7 @@ async function handleSkillExecution(ws, session, userMessage) {
       cwd: skillDir,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120000,
+      windowsHide: true, // 隐藏 Windows 子进程控制台窗口
     });
     if (stderr) console.warn(`[Skill] ${skillName} stderr:`, stderr);
     const output = stdout || 'Skill 执行完成（无输出）';
@@ -2452,6 +2454,7 @@ async function runSkillTool(args, callId, { ws, session }) {
         cwd: skillDir,
         maxBuffer: 10 * 1024 * 1024,
         timeout: 120000,
+        windowsHide: true, // 隐藏 Windows 子进程控制台窗口
       });
       if (stderr) console.warn(`[skill tool] ${name} stderr:`, stderr);
       const output = stdout || 'Skill 执行完成（无输出）';
@@ -2981,6 +2984,7 @@ function selfRestart() {
     env: process.env,
     stdio: 'inherit',
     detached: true,
+    windowsHide: true, // 自重启时不要弹出新的控制台窗口
   });
   child.unref();
   let done = false; // true once old has either exited (handoff) or reclaimed the port
