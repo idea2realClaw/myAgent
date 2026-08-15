@@ -1361,8 +1361,12 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     // 断连即取消：置停止标志并 abort 当前 LLM/工具请求，避免后端在无人连接的会话上空跑占用资源
-    session.stopRequested = true;
-    try { session.llmAbort?.abort(); } catch {}
+    // 注意：session 不在连接级作用域，必须从 sessions map 重新按 sessionId 取出
+    const session = sessions.get(sessionId);
+    if (session) {
+      session.stopRequested = true;
+      try { session.llmAbort?.abort(); } catch {}
+    }
     sessions.delete(sessionId);
   });
 });
