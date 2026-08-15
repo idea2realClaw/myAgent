@@ -884,10 +884,10 @@
       margin: 0; font-family: var(--font-mono); font-size: var(--text-sm);
       line-height: 1.55; color: var(--code-text);
       white-space: pre-wrap; word-break: break-all;
-      max-height: 260px; overflow-y: auto;
+      max-height: 173px; overflow-y: auto;   /* 展开态高度缩到约 2/3（260→173） */
       padding: var(--space-2) var(--space-3);
     }
-    .tool-exec-args-pre { max-height: 130px; }
+    .tool-exec-args-pre { max-height: 87px; }   /* 约 2/3（130→87） */
     .tool-exec-panel--error .tool-exec-output { border-color: rgba(248,113,113,0.30); }
     .tool-exec-panel--error .tool-exec-output-pre { color: var(--red); }
     /* ── Exec Output Card ────────────────────────── */
@@ -910,7 +910,7 @@
     .exec-output-status.error { color: var(--red); }
     .exec-output-toggle { font-size: 0.625rem; color: var(--text3); transition: transform 0.2s; }
     .exec-output-body {
-      max-height: 400px; overflow-y: auto;
+      max-height: 267px; overflow-y: auto;   /* 展开态高度缩到约 2/3（400→267） */
       padding: 10px 12px; font-family: 'SF Mono', 'Monaco', monospace;
       font-size: 0.6875rem; line-height: 1.5; color: #d4d4d8;
       white-space: pre-wrap; word-break: break-all;
@@ -2617,6 +2617,9 @@ function toolArgsText(tool, args) {
 function logPanelRect(el, tag) {
   if (!el || typeof el.getBoundingClientRect !== 'function') return;
   requestAnimationFrame(function () {
+    // 折叠状态：命令面板(.tool-exec-body) 或 实时命令卡(.exec-output-body) 是否折叠
+    var body = el.querySelector('.tool-exec-body, .exec-output-body');
+    var collapsed = body ? body.classList.contains('collapsed') : null;
     var r = el.getBoundingClientRect();
     var corners = {
       TL: { x: Math.round(r.left), y: Math.round(r.top) },
@@ -2624,7 +2627,12 @@ function logPanelRect(el, tag) {
       BR: { x: Math.round(r.right), y: Math.round(r.bottom) },
       BL: { x: Math.round(r.left), y: Math.round(r.bottom) }
     };
-    var line = '[ToolPanel:' + tag + '] size=' + Math.round(r.width) + 'x' + Math.round(r.height) +
+    // 缺省折叠时 body 为 display:none，Panel 高度 = 仅 header 的最小高度
+    var minTag = (collapsed === true) ? ' (min-height/collapsed)' : '';
+    var line = '[ToolPanel:' + tag + '] collapsed=' + (collapsed === null ? 'n/a' : collapsed) +
+      ' height=' + Math.round(r.height) + 'px' + minTag +
+      ' width=' + Math.round(r.width) + 'px' +
+      ' size=' + Math.round(r.width) + 'x' + Math.round(r.height) +
       ' rect(top=' + Math.round(r.top) + ' left=' + Math.round(r.left) + ' right=' + Math.round(r.right) + ' bottom=' + Math.round(r.bottom) + ')' +
       ' corners=' + JSON.stringify(corners) +
       ' messagesWidth=' + (document.getElementById('messages') ? Math.round(document.getElementById('messages').clientWidth) : 'n/a');
@@ -2632,7 +2640,7 @@ function logPanelRect(el, tag) {
     try {
       fetch('/api/clientlog', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag: tag, width: r.width, height: r.height, corners: corners }), keepalive: true
+        body: JSON.stringify({ tag: tag, collapsed: collapsed, height: r.height, width: r.width, corners: corners }), keepalive: true
       });
     } catch (e) { /* endpoint optional, browser console already has it */ }
   });
@@ -2694,6 +2702,7 @@ function toggleToolPanel(headerEl) {
   if (!body || !arrow) return;
   body.classList.toggle('collapsed');
   arrow.classList.toggle('tool-exec-arrow--collapsed');
+  logPanelRect(headerEl.parentElement, 'toggle');
 }
 
 function findToolPanel(callId) {
@@ -3102,6 +3111,7 @@ function renderExecOutputCard(command, status) {
   currentExecCard = cardId;
   currentExecBody = bodyId;
   scrollToBottom();
+  logPanelRect(el, 'exec-call');   // 命令卡缺省折叠 → 打印最小高度
 }
 
 function appendExecOutput(stream, data) {
@@ -3167,6 +3177,7 @@ function toggleExecOutput(id) {
     el.classList.add('collapsed');
     icon.textContent = '▶';
   }
+  logPanelRect(el.closest('.exec-output-card') || el, 'exec-toggle');
 }
 
 // ── Input ───────────────────────────────────────────────────
