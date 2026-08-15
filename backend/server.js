@@ -1913,7 +1913,10 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
         modelHint: llmConfig.model,
         tokenBudget: usage.modelTokens || null,
       })) {
-        if (kev.kind === 'tool_result') toolResultsText.push(kev.resultText);
+        if (kev.kind === 'tool_result') {
+          toolResultsText.push(kev.resultText);
+          recordCommandResult(session, kev);
+        }
         const mapped = adaptKernelEventToWs(kev, { ws: buffer ? null : ws, executedTools });
         if (!mapped) continue;
         if (mapped.__record) { executedTools.push(mapped.__record); continue; }
@@ -1954,6 +1957,16 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
         executedTools.map((t) => t.title).join('、') + '。请重试或更换模型。]';
     } else {
       finalText = '[模型未返回有效内容（可能是当前模型触发限流或临时不可用）。请稍后重试或更换模型。]';
+    }
+  }
+
+  // 6) 命令执行核对：若本轮执行了命令类工具，确保最终回答如实反映其成败（避免“命令成功但总结没发现”）
+  if (session.lastCommandResults && session.lastCommandResults.length > 0) {
+    const question = [...history].reverse().find((m) => m.role === 'user')?.content || '';
+    try {
+      finalText = await verifyCommandResults(llm, question, finalText, session.lastCommandResults);
+    } catch (e) {
+      console.warn('[AgentLoop] 命令结果核对失败，沿用原回答:', e.message);
     }
   }
 
@@ -2056,7 +2069,7 @@ async function planSelfCheck(llm, question, context) {
 }
 
 // ⑤ 汇总：基于真实结果写最终答案；仍未解决的列为「遗留问题」
-async function planSynthesize(llm, question, context, remaining) {
+async function planSynthesize(llm, question, context, remaining, lastCmd) {
   const sys = [
     '你是总结助手。你的唯一任务是【直接回答用户的原始问题】，答案必须紧扣问题本身，不要跑题、不要只讲背景。',
     '你【必须以下方“已收集的检索资料”为事实依据】来组织答案：从其中标注为「web_search 等工具检索到的真实资料」的内容里，提取与问题直接相关的具体信息（数字、日期、名称、赛果、结论等）并据此作答。',
@@ -2065,12 +2078,64 @@ async function planSynthesize(llm, question, context, remaining) {
     '结构：先用 1–2 句直接给出对问题的核心回答，再分点展开关键信息。',
     '若检索资料确实不足以回答问题的某一部分，请在结尾单列一节「⚠️ 遗留问题」，逐条说明缺口、原因与建议的下一步；能回答的部分仍要正常回答。若已完整解决则无需该节。',
     '使用简体中文，条理清晰、直接。',
+    '⚠️ 重要核对：下方「最后执行的命令与结果」若非空，你的回答必须【明确反映这些命令的成败】——命令成功的须确认其已成功并引用关键输出；命令失败的须说明失败原因。绝不得谎称成功或忽略已执行的命令结果。',
   ].join('\n');
   let user = `用户的原始问题（你的回答必须针对它，逐点回应）：\n${question}\n\n=== 已收集的检索资料与中间结果（请据此作答，勿脱离）===\n${(context || '').slice(-16000)}`;
   if (remaining && remaining.length) {
     user += `\n\n经自检仍未解决的缺口：\n- ${remaining.join('\n- ')}`;
   }
+  // 最后执行的命令与结果：总结时强制核对成败
+  const lastBlock = buildLastCommandBlock(lastCmd);
+  if (lastBlock) user += lastBlock;
   return await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.3 });
+}
+
+// 命令/代码执行类工具（输出长，且总结时必须核对成败）
+const COMMAND_TOOL_SET = new Set(['shell_execute', 'bash', 'bash_exec', 'exec', 'shell', 'python_execute']);
+function isCommandTool(name) {
+  return COMMAND_TOOL_SET.has(name);
+}
+
+// 记录最近几条命令类工具的执行结果（供最终总结核对成败）。写入 session.lastCommandResults。
+function recordCommandResult(session, kev) {
+  if (!session || !kev) return;
+  const name = kev.toolName || kev.name || '';
+  if (!isCommandTool(name)) return;
+  if (!session.lastCommandResults) session.lastCommandResults = [];
+  session.lastCommandResults.push({
+    tool: name,
+    ok: kev.ok !== false,
+    resultText: kev.resultText || '',
+    callId: kev.callId,
+  });
+  if (session.lastCommandResults.length > 8) session.lastCommandResults.shift();
+}
+
+// 把最近几条命令结果拼成显式核对块（总结时注入）
+function buildLastCommandBlock(lastCmd) {
+  if (!lastCmd || !lastCmd.length) return '';
+  const items = lastCmd.slice(-6).map((c, i) => {
+    const status = c.ok ? '✅ 成功' : '❌ 失败';
+    const out = (c.resultText || '').slice(0, 1200);
+    return `(${i + 1}) [${c.tool}] ${status}\n${out}`;
+  });
+  return `\n\n=== 最后执行的命令与结果（总结时务必逐条核对，尤其确认成功/失败与实际输出）===\n${items.join('\n\n')}`;
+}
+
+// simple 路径兜底：若本轮执行了命令类工具，用一次轻量核对确保最终回答如实反映命令成败
+async function verifyCommandResults(llm, question, draft, lastCmd) {
+  if (!lastCmd || !lastCmd.length) return draft;
+  if (!draft || !draft.trim()) return draft;
+  const sys = [
+    '你是答案核对助手。用户刚才让 AI 执行了若干命令，AI 已写出一份最终回答草稿。',
+    '请核对草稿是否【如实反映这些命令的执行结果】：命令成功的须确认成功并体现关键输出；命令失败的须说明失败原因。',
+    '不得编造、不得谎称成功、不得忽略已执行的命令。直接输出修正后的最终回答（若草稿已正确则原样返回，不要额外加说明）。',
+    '使用简体中文。',
+  ].join('\n');
+  const items = lastCmd.slice(-6).map((c, i) => `(${i + 1}) [${c.tool}] ${c.ok ? '成功' : '失败'}\n${(c.resultText || '').slice(0, 1200)}`).join('\n\n');
+  const user = `原始问题：${question}\n\n【本次实际执行的最后几条命令与结果】\n${items}\n\n【AI 写的最终回答草稿】\n${draft}\n\n请核对并输出最终回答：`;
+  const t = await llm.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { temperature: 0.2 });
+  return (t || '').trim() || draft;
 }
 
 // 执行单个子任务：agentKernel 带工具跑一趟，转发 tool_call/tool_result（不发 chunk/done），返回文本
@@ -2141,6 +2206,7 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
         } else if (kev.kind === 'tool_result') {
           broadcast(ws, { type: 'tool_result', success: kev.ok, output: kev.resultText, callId: kev.callId });
           toolResultsText.push(kev.resultText || '');
+          recordCommandResult(session, kev);
         } else if (kev.kind === 'error') {
           return { content: '', executedTools, error: kev.message };
         }
@@ -2317,11 +2383,11 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
   let finalText = '';
   let synthError = null;
   try {
-    finalText = (await planSynthesize(llm, question, context, remaining)).trim();
+    finalText = (await planSynthesize(llm, question, context, remaining, session.lastCommandResults)).trim();
     // 兜底：汇总偶尔返回空（模型空 completion / 截断），重试一次（缩短上下文避免超长）
     if (!finalText) {
       console.log('[PlannedLoop] 汇总首次返回空，重试一次');
-      finalText = (await planSynthesize(llm, question, context.slice(-12000), remaining)).trim();
+      finalText = (await planSynthesize(llm, question, context.slice(-12000), remaining, session.lastCommandResults)).trim();
     }
   } catch (e) { finalText = ''; synthError = e.message; }
   finalText = identity.filterOutput((finalText || '').trim());
@@ -2782,6 +2848,7 @@ async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
   ws.__toolCallsThisTurn = 0; // 重置本轮工具调用计数（透明性安全网用）
   session.__realToolNames = new Set(); // 重置本轮真实执行的工具名集合（真实性闸门用）
+  session.lastCommandResults = []; // 重置本轮命令执行记录（最终总结核对成败用）
   // 每个对话轮次一个 AbortController：停止/断连时 abort，立刻中断在途的 LLM 与工具请求
   try { session.llmAbort?.abort(); } catch {}
   session.llmAbort = new AbortController();

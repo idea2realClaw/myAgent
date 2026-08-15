@@ -2602,6 +2602,12 @@ function toolSubtitle(tool, args) {
   return '';
 }
 
+// 命令/代码执行类工具：输出通常很长，Chat Stream 中缺省折叠
+const COMMAND_TOOLS = new Set(['shell_execute', 'bash', 'bash_exec', 'exec', 'shell', 'python_execute']);
+function isCommandTool(tool) {
+  return COMMAND_TOOLS.has(tool);
+}
+
 function toolArgsText(tool, args) {
   if (!args) return '';
   if (tool === 'shell_execute' && args.command) return args.command;
@@ -2639,6 +2645,9 @@ function renderToolCall(tool, args, callId) {
   el.className = 'tool-exec-panel';
   el.dataset.pending = '1';
   if (callId) el.dataset.callId = callId;
+  if (tool) el.dataset.tool = tool;
+  // 命令/代码执行类工具缺省折叠，避免长输出刷屏
+  const cmdCollapsed = isCommandTool(tool);
 
   const subtitle = toolSubtitle(tool, args);
   const subtitleHtml = subtitle
@@ -2661,10 +2670,10 @@ function renderToolCall(tool, args, callId) {
       </div>
       <div class="tool-exec-header-right">
         <span class="tool-exec-size-badge" style="display:none"></span>
-        <span class="tool-exec-arrow">▼</span>
+        <span class="tool-exec-arrow${cmdCollapsed ? ' tool-exec-arrow--collapsed' : ''}">▼</span>
       </div>
     </div>
-    <div class="tool-exec-body">
+    <div class="tool-exec-body${cmdCollapsed ? ' collapsed' : ''}">
       ${argsBlock}
       <div class="tool-exec-output">
         <div class="tool-exec-output-header"><span class="tool-exec-label">输出</span></div>
