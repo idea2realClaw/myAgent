@@ -99,12 +99,12 @@ export async function* execStream({ command, workdir, signal }) {
 // Main dispatch — Now uses ToolRegistry for structured execution
 // ============================================================
 
-export async function executeTool(toolCall) {
+export async function executeTool(toolCall, opts = {}) {
   const { name, arguments: args } = toolCall;
   
   try {
     // Use the structured registry for execution
-    const result = await registry.execute({ name, arguments: args });
+    const result = await registry.execute({ name, arguments: args }, { signal: opts.signal });
     
     if (result.success) {
       // Format result for LLM consumption

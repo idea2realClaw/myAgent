@@ -208,6 +208,35 @@
     }
     #topbar .context-badge.warn { color: var(--yellow); border-color: var(--yellow); }
     #topbar .context-badge.danger { color: var(--red); border-color: var(--red); }
+    #topbar .model-badge {
+      padding: 3px 10px; border-radius: 20px; font-size: 0.6875rem; font-weight: 600;
+      background: var(--bg4); color: var(--accent); border: 1px solid var(--border);
+      max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #topbar .clock {
+      font-size: 0.6875rem; color: var(--text2); font-variant-numeric: tabular-nums;
+      padding: 3px 8px; border-radius: 20px; background: var(--bg4); border: 1px solid var(--border);
+    }
+
+    /* Scroll-to-bottom FAB */
+    #scroll-fab {
+      position: fixed; right: 22px; bottom: 104px; z-index: 30;
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--accent); color: #fff; border: none; cursor: pointer;
+      display: none; align-items: center; justify-content: center;
+      box-shadow: 0 4px 14px rgba(0,0,0,.35); font-size: 18px; line-height: 1;
+    }
+    #scroll-fab:hover { opacity: .9; }
+    #scroll-fab.show { display: flex; }
+
+    /* Regenerate button */
+    #regen-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 10px; border-radius: 8px; font-size: 0.8125rem; font-weight: 600;
+      background: var(--bg4); color: var(--text); border: 1px solid var(--border); cursor: pointer;
+    }
+    #regen-btn:hover { border-color: var(--accent); color: var(--accent); }
+    #regen-btn:disabled { opacity: .4; cursor: not-allowed; }
 
     /* ── Sidebar ─────────────────────────────────────────── */
     #sidebar {
@@ -1445,8 +1474,10 @@
       MyAgent
     </div>
     <span id="provider-badge" class="provider-badge">OpenAI</span>
+    <span id="model-badge" class="model-badge" title="当前模型">—</span>
     <span id="context-badge" class="context-badge" style="display:none" title="模型上下文窗口 / 当前会话已用">ctx –</span>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <span id="clock" class="clock" title="本地时间">--:--:--</span>
       <span class="status-text" id="status-text">Connecting...</span>
       <div class="status-dot" id="status-dot"></div>
     </div>
@@ -1904,10 +1935,15 @@
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
             Stop
           </button>
+          <button id="regen-btn" onclick="regenerate()" title="重新生成上一条回答">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+            重新生成
+          </button>
         </div>
       </div>
-      <div id="input-hint">Enter to send · Shift+Enter for newline · Parallel mode auto-splits complex tasks</div>
+      <div id="input-hint">Enter to send · Shift+Enter for newline · Parallel mode auto-splits complex tasks · 重新生成可重跑上一轮</div>
     </div>
+    <button id="scroll-fab" onclick="scrollToBottom(true)" title="滚动到底部">↓</button>
   </main>
 </div>
 
@@ -1960,6 +1996,10 @@ document.addEventListener('DOMContentLoaded', () => {
       closeAllPanels();
     });
   }
+
+  // 启动滚动 FAB 与顶栏时钟
+  setupScrollFab();
+  startClock();
 });
 
 function renderSubtaskPanel(taskId, title, instruction, command) {
@@ -2290,6 +2330,8 @@ function handleMessage(msg) {
     removeStatus();
     isThinking = false;
     setSendEnabled(true);
+    const regenBtn = document.getElementById('regen-btn');
+    if (regenBtn) regenBtn.disabled = false;
     appendLog('info', `✅ 回答完成，返回给用户`, { length: (msg.content || '').length });
 
     // Toggle buttons: hide Stop, show Send
@@ -2347,6 +2389,7 @@ function handleMessage(msg) {
       temperature,
       hasApiKey: !!(document.getElementById('cfg-apikey').value && document.getElementById('cfg-apikey').value !== '***'),
     };
+    updateModelBadge(getModelAlias(model) || model);
     // Reload models to pick up newly added model
     loadAllModels().catch(() => {});
   }
@@ -2395,6 +2438,7 @@ function handleMessage(msg) {
   // ── 上下文使用情况（模型窗口 / 会话已用量）───────────
   else if (type === 'context_usage') {
     updateContextBadge(msg);
+    if (msg.model) updateModelBadge(getModelAlias(msg.model) || msg.model);
   }
 
   // ── Undo/Redo results ─────────────────────
@@ -2973,9 +3017,45 @@ function renderUserMessage(text) {
   }
 }
 
-function scrollToBottom() {
+function scrollToBottom(force) {
   const msgs = document.getElementById('messages');
-  msgs.scrollTop = msgs.scrollHeight;
+  if (!msgs) return;
+  const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
+  // 仅在用户本就在底部、或显式强制（点 FAB）时才滚动；否则保留阅读位置并提示 FAB
+  if (force || nearBottom) {
+    msgs.scrollTop = msgs.scrollHeight;
+    const fab = document.getElementById('scroll-fab');
+    if (fab) fab.classList.remove('show');
+  } else {
+    const fab = document.getElementById('scroll-fab');
+    if (fab) fab.classList.add('show');
+  }
+}
+
+// ── Scroll-to-bottom FAB ──
+function setupScrollFab() {
+  const msgs = document.getElementById('messages');
+  const fab = document.getElementById('scroll-fab');
+  if (!msgs || !fab) return;
+  msgs.addEventListener('scroll', () => {
+    const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
+    fab.classList.toggle('show', !nearBottom);
+  });
+}
+
+// ── 本地时钟（顶栏）──
+function startClock() {
+  const el = document.getElementById('clock');
+  if (!el) return;
+  const tick = () => { el.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }); };
+  tick();
+  setInterval(tick, 1000);
+}
+
+// ── 顶栏模型名 ──
+function updateModelBadge(model) {
+  const el = document.getElementById('model-badge');
+  if (el && model) el.textContent = model;
 }
 
 function escapeHtml(text) {
@@ -3095,10 +3175,13 @@ function sendMessage() {
   const sendProvider = document.getElementById('cfg-provider').value;
   const sendModel = document.getElementById('cfg-model').value;
   _currentModelAlias = getModelAlias(sendModel) || sendProvider;
+  updateModelBadge(_currentModelAlias);
 
   input.value = '';
   autoResize(input);
   setSendEnabled(false);
+  const regenBtn = document.getElementById('regen-btn');
+  if (regenBtn) regenBtn.disabled = true;
   streamBuffer = '';
   streamEl = null;
   currentAssistantBubble = null;
@@ -3154,6 +3237,14 @@ function onKeyDown(e) {
     e.preventDefault();
     sendMessage();
   }
+}
+
+// ── 重新生成上一条回答 ──
+function regenerate() {
+  if (!wsReady || isThinking) return;
+  const btn = document.getElementById('regen-btn');
+  if (btn) btn.disabled = true;
+  ws.send(JSON.stringify({ type: 'regenerate', conversationId: currentConversationId }));
 }
 
 function autoResize(el) {
@@ -3312,13 +3403,22 @@ async function loadAllModels() {
   const providers = ['qgenie', 'local', 'openai', 'anthropic', 'openrouter'];
   window._modelsCache = {};
   for (const p of providers) {
-    try {
-      const res = await fetch(`/api/models/${p}`);
-      const data = await res.json();
-      window._modelsCache[p] = data.models || [];
-    } catch (e) {
-      console.warn(`[Models] Failed to load ${p} models, using fallback:`, e.message);
-      window._modelsCache[p] = (MODELS[p] || []).slice();
+    let ok = false;
+    for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
+      try {
+        const res = await fetch(`/api/models/${p}`);
+        const data = await res.json();
+        window._modelsCache[p] = data.models || [];
+        ok = true;
+      } catch (e) {
+        if (attempt === 1) {
+          console.warn(`[Models] 首次加载 ${p} 模型列表失败，800ms 后重试:`, e.message);
+          await new Promise(r => setTimeout(r, 800));
+        } else {
+          console.warn(`[Models] 加载 ${p} 模型列表失败，使用静态兜底:`, e.message);
+          window._modelsCache[p] = (MODELS[p] || []).slice();
+        }
+      }
     }
   }
   console.log('[Models] Loaded model lists from backend');

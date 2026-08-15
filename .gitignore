@@ -24,3 +24,7 @@ data/experiences.json
 # skill 内部噪音与超大二进制(本地保留、不入库)
 skills/**/.codebuddy/
 skills/book-downloader/*.pdf
+
+# 本地模型权重(二进制, 不入库)
+*.onnx
+face_detection_yunet_2023mar.onnx

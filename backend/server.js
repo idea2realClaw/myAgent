@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid';
 const execAsync = promisify(exec);
 
 import { LLMAdapter } from './llm-adapter.js';
+import { repairJsonArgs } from './json-repair-util.js';
 import { SkillLoader } from './skill-loader.js';
 import { SkillExecutor, extractExecutionCommand } from './skill-executor.js';
 import { IdentityManager } from './identity-manager.js';
@@ -1186,6 +1187,25 @@ wss.on('connection', (ws) => {
         session.history = msg.history.filter((m) => m && typeof m.content === 'string' && ['user', 'assistant', 'system'].includes(m.role));
       }
       await handleChat(sessionId, session, msg);
+    } else if (msg.type === 'regenerate') {
+      // 重新生成：取末尾的 assistant 回答与其前的 user 提问，二者都弹出，
+      // 再用该用户提问重跑 handleChat（handleChat 会重新压入 user + 新 assistant，避免历史出现重复提问）
+      const hist = session.history || [];
+      let lastUserContent = null;
+      if (hist.length >= 1 && hist[hist.length - 1].role === 'assistant') {
+        hist.pop(); // 移除上一次 assistant 回答
+        const prev = hist[hist.length - 1];
+        if (prev && prev.role === 'user') {
+          lastUserContent = prev.content;
+          hist.pop(); // 移除该 user 提问（稍后由 handleChat 重新压入）
+        }
+      }
+      if (lastUserContent == null) {
+        broadcast(ws, { type: 'error', message: '没有可重新生成的上一轮对话' });
+        return;
+      }
+      await handleChat(sessionId, session, { content: lastUserContent, conversationId: msg.conversationId });
+      return;
     } else if (msg.type === 'config_update') {
       session.config = { ...session.config, ...msg.config };
       saveConfig(session.config);
@@ -1237,6 +1257,8 @@ wss.on('connection', (ws) => {
     } else if (msg.type === 'stop') {
       // Set stop flag for this session
       session.stopRequested = true;
+      // 立刻中断在途的 LLM 流式请求与工具子进程（kill shell / 取消 fetch）
+      try { session.llmAbort?.abort(); } catch {}
       // 级联取消：显式 signal 该会话派生出的所有运行中子 Agent（State-Truth-First）
       const cascaded = subAgentManager._abortRegistry.abortByOwnerTab(session.id);
       broadcast(ws, { type: 'stopped', message: 'Task stopped by user' });
@@ -1337,6 +1359,9 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    // 断连即取消：置停止标志并 abort 当前 LLM/工具请求，避免后端在无人连接的会话上空跑占用资源
+    session.stopRequested = true;
+    try { session.llmAbort?.abort(); } catch {}
     sessions.delete(sessionId);
   });
 });
@@ -1541,7 +1566,7 @@ async function handleExecStream(ws, session, msg) {
   broadcast(ws, { type: 'exec_start', command });
 
   try {
-    const stream = execStream({ command, workdir });
+    const stream = execStream({ command, workdir, signal: session.llmAbort?.signal });
     
     for await (const event of stream) {
       if (event.type === 'stdout' || event.type === 'stderr') {
@@ -1872,7 +1897,7 @@ async function runAgentLoop({ ws, session, llm, system, history, config, useTool
   const runPass = async (withTools, buffer) => {
     const toolSchemas = withTools ? getAllOpenAIToolSchemas() : [];
     const supportsTools = llm.supportsFunctionCalling() && toolSchemas.length > 0;
-    const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas);
+    const openRoundStream = makeOpenRoundStream(llm, supportsTools, toolSchemas, session.llmAbort?.signal);
     const buffered = [];
     const toolResultsText = [];
     try {
@@ -2348,7 +2373,7 @@ async function* makeMainToolExecutor(roundNo, toolMetas, { ws, session, llmConfi
       if (name === 'skill') {
         return await runSkillTool(args, callId, { ws, session });
       }
-      const result = await executeTool({ name, arguments: args });
+      const result = await executeTool({ name, arguments: args }, { signal: session.llmAbort?.signal });
       if (session && session.__realToolNames) session.__realToolNames.add(name);
       const ok = result.success !== false;
       const raw = result.output != null ? String(result.output) : (result.error || '');
@@ -2607,7 +2632,7 @@ function adaptKernelEventToWs(kev, { ws, executedTools }) {
 }
 
 function safeParseArgs(s) {
-  try { return JSON.parse(s); } catch { return {}; }
+  return repairJsonArgs(s);
 }
 function wireToFinalText(wire) {
   for (let i = wire.length - 1; i >= 0; i--) {
@@ -2721,13 +2746,15 @@ function parseInvocation(text) {
 // 关键兜底：当模型未返回结构化 tool_call、却把工具调用以 JSON 文本吐出时
 // （如 Nemotron 3 在 web_search 上偶发退化成 {"tool":"web_search","arguments":{...}}），
 // 解析并合成 tool_call 帧，使内核真正执行该工具，而不是把 JSON 当成最终答案、工具静默不执行。
-function makeOpenRoundStream(llm, supportsTools, toolSchemas) {
+function makeOpenRoundStream(llm, supportsTools, toolSchemas, signal) {
   return async function* (_roundNo, sendWire) {
     let frames = [];
     let textBuf = '';
     let sawToolCall = false;
+    const streamOpts = supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 };
+    if (signal) streamOpts.signal = signal;
     try {
-      for await (const chunk of llm.stream(sendWire, supportsTools ? { tools: toolSchemas, temperature: 0.7 } : { temperature: 0.7 })) {
+      for await (const chunk of llm.stream(sendWire, streamOpts)) {
         if (chunk.type === 'text') { textBuf += chunk.content || ''; frames.push({ type: 'chunk', text: chunk.content }); }
         else if (chunk.type === 'tool_call') { sawToolCall = true; frames.push({ type: 'tool_call', id: chunk.id, name: chunk.name, arguments: chunk.arguments }); }
       }
@@ -2752,6 +2779,9 @@ async function handleChat(sessionId, session, msg) {
   const { ws, history, config } = session;
   ws.__toolCallsThisTurn = 0; // 重置本轮工具调用计数（透明性安全网用）
   session.__realToolNames = new Set(); // 重置本轮真实执行的工具名集合（真实性闸门用）
+  // 每个对话轮次一个 AbortController：停止/断连时 abort，立刻中断在途的 LLM 与工具请求
+  try { session.llmAbort?.abort(); } catch {}
+  session.llmAbort = new AbortController();
   const userMessage = msg.content;
   const conversationId = msg.conversationId || 'unknown';
 

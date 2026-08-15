@@ -120,7 +120,7 @@ class ToolRegistry {
     return Array.from(unique.values());
   }
   
-  async execute(toolCall) {
+  async execute(toolCall, opts = {}) {
     const { name, arguments: args } = toolCall;
     
     const tool = this.getTool(name);
@@ -146,7 +146,7 @@ class ToolRegistry {
     // Execute with metadata
     const startTime = Date.now();
     try {
-      const result = await tool.handler(args);
+      const result = await tool.handler(args, { signal: opts.signal });
       const endTime = Date.now();
       
       return {
@@ -184,7 +184,7 @@ class ToolRegistry {
         workdir: { type: 'string', description: 'Working directory (relative to workspace root)', required: false },
       },
       aliases: ['bash', 'bash_exec', 'exec', 'shell'],
-      handler: async ({ command, workdir }) => {
+      handler: async ({ command, workdir, signal }) => {
         const cwd = workdir ? sanitizePath(workdir) : WORKSPACE_ROOT;
         try {
           const { stdout, stderr } = await execAsync(command, {
@@ -193,6 +193,7 @@ class ToolRegistry {
             maxbuffer: 1024 * 1024 * 5,
             shell: true,
             encoding: 'buffer', // capture raw bytes; decode with correct code page
+            ...(signal ? { signal } : {}), // 停止时 abort 会 kill 子进程
           });
           return {
             stdout: decodeShell(stdout),
@@ -219,16 +220,20 @@ class ToolRegistry {
         prompt: { type: 'string', description: 'Optional: what to extract or analyze from the page', required: false },
       },
       aliases: ['fetch', 'fetch_url', 'http_get'],
-      handler: async ({ url, prompt }) => {
+      handler: async ({ url, prompt, signal }) => {
         let controller;
         let timeout;
         
         try {
           controller = new AbortController();
           timeout = setTimeout(() => controller.abort(), 15000);
+          // 合并会话停止信号：stop/断连时立刻取消 fetch
+          const fetchSignal = (signal && typeof AbortSignal.any === 'function')
+            ? AbortSignal.any([controller.signal, signal])
+            : controller.signal;
           
           const resp = await fetch(url, {
-            signal: controller.signal,
+            signal: fetchSignal,
             headers: {
               'User-Agent': 'Agent-WebUI/1.0.0',
             },
@@ -272,7 +277,7 @@ class ToolRegistry {
         search_lang: { type: 'string', description: 'Search language (default: zh-CN for Chinese, en-US for English)', required: false },
       },
       aliases: ['search', 'search_web', 'webSearch'],
-      handler: async ({ query, count = 5, search_lang = 'zh-CN' }) => {
+      handler: async ({ query, count = 5, search_lang = 'zh-CN', signal }) => {
         if (!query) throw new Error('query is required');
 
         const maxResults = Math.min(count || 5, 10);
@@ -282,10 +287,14 @@ class ToolRegistry {
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
+        // 合并会话停止信号：stop/断连时立刻取消 fetch
+        const fetchSignal = (signal && typeof AbortSignal.any === 'function')
+          ? AbortSignal.any([controller.signal, signal])
+          : controller.signal;
 
         try {
           const resp = await fetch(url, {
-            signal: controller.signal,
+            signal: fetchSignal,
             headers: {
               'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -515,7 +524,7 @@ class ToolRegistry {
         args: { type: 'string', description: 'Command-line arguments (passed to script)', required: false },
       },
       aliases: ['python', 'run_python'],
-      handler: async ({ code, args = '' }) => {
+      handler: async ({ code, args = '', signal }) => {
         if (!code) throw new Error('code is required');
         
         const tmpFile = `/tmp/py_exec_${Date.now()}.py`;
@@ -551,13 +560,14 @@ class ToolRegistry {
         body: { type: 'string', description: 'Request body (for POST/PUT)', required: false },
       },
       aliases: ['api_call', 'rest_api'],
-      handler: async ({ url, method = 'GET', headers = {}, body = '' }) => {
+      handler: async ({ url, method = 'GET', headers = {}, body = '', signal }) => {
         if (!url) throw new Error('url is required');
         
         const fetchOptions = {
           method,
           headers: { 'User-Agent': 'Mozilla/5.0', ...headers },
         };
+        if (signal) fetchOptions.signal = signal; // 停止时取消 fetch
         
         if (body && method !== 'GET') {
           fetchOptions.body = body;

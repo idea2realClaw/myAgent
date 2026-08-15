@@ -4,6 +4,8 @@
 // Features: Native function calling, structured stream events
 // ============================================================
 
+import { repairJsonArgs } from './json-repair-util.js';
+
 // 单次 LLM 调用的默认超时(毫秒)。provider 网络一旦挂起，没有超时会让
 // await llm.chat(...) 永远不返回——调用方(如 planDecompose 的"正在分解任务")
 // 会卡死。超时后抛错，由调用方 try/catch 兜底(退化为单一子任务)，状态得以推进。
@@ -100,6 +102,7 @@ export class LLMAdapter {
       temperature: options.temperature ?? 0.7,
       stream: true,
       ...options.extra,
+      ...(options.signal ? { signal: options.signal } : {}),
     };
     
     // Add tools if provided (for native function calling)
@@ -158,26 +161,20 @@ export class LLMAdapter {
       toolCalls.push(currentToolCall);
     }
 
-    // Yield tool calls as structured events
+    // Yield tool calls as structured events (tolerant JSON parse for streamed/truncated args)
     for (const tc of toolCalls) {
-      try {
-        const args = JSON.parse(tc.function.arguments || '{}');
-        yield {
-          type: 'tool_call',
-          id: tc.id,
-          name: tc.function.name,
-          arguments: args,
-        };
-      } catch {
-        // If can't parse arguments, yield raw
-        yield {
-          type: 'tool_call',
-          id: tc.id,
-          name: tc.function.name,
-          arguments: {},
-          raw: tc.function.arguments,
-        };
-      }
+      const args = repairJsonArgs(tc.function.arguments);
+      // 仅当修复彻底失败（原串非空却解析为空对象）时附带 raw 供上层兜底
+      const raw = (typeof tc.function.arguments === 'string' && tc.function.arguments.trim() && Object.keys(args).length === 0)
+        ? tc.function.arguments
+        : undefined;
+      yield {
+        type: 'tool_call',
+        id: tc.id,
+        name: tc.function.name,
+        arguments: args,
+        ...(raw ? { raw } : {}),
+      };
     }
   }
 
@@ -214,6 +211,7 @@ export class LLMAdapter {
       max_tokens: options.maxTokens || 8192,
       system: sysMsg?.content,
       messages: convMsgs,
+      ...(options.signal ? { signal: options.signal } : {}),
     });
 
     for await (const event of stream) {
@@ -235,7 +233,7 @@ export class LLMAdapter {
 
     const response = await fetch(url, {
       method: 'POST',
-      signal: AbortSignal.timeout(ms),
+      signal: options.signal || AbortSignal.timeout(ms),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey || 'dummy'}`,
@@ -256,9 +254,11 @@ export class LLMAdapter {
   async *_qgenieStream(messages, options = {}) {
     const { apiKey, model, baseURL } = this.config;
     const url = `${baseURL || 'https://qgenie.example.com/v1'}/chat/completions`;
+    const ms = options.timeout ?? DEFAULT_LLM_TIMEOUT_MS;
 
     const response = await fetch(url, {
       method: 'POST',
+      signal: options.signal || AbortSignal.timeout(ms),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey || 'dummy'}`,
@@ -293,13 +293,15 @@ export class LLMAdapter {
           if (delta?.content) {
             yield { type: 'text', content: delta.content };
           }
-          // Handle tool calls if present
+          // Handle tool calls if present (tolerant JSON parse for streamed/truncated args)
           if (delta?.tool_calls) {
             for (const tc of delta.tool_calls) {
+              let args = {};
+              try { args = repairJsonArgs(tc.function?.arguments); } catch { /* ignore */ }
               yield {
                 type: 'tool_call',
                 name: tc.function?.name,
-                arguments: JSON.parse(tc.function?.arguments || '{}'),
+                arguments: args,
               };
             }
           }
@@ -317,7 +319,7 @@ export class LLMAdapter {
 
     const response = await fetch(url, {
       method: 'POST',
-      signal: AbortSignal.timeout(ms),
+      signal: options.signal || AbortSignal.timeout(ms),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: model || 'local-default',
@@ -335,9 +337,11 @@ export class LLMAdapter {
   async *_localStream(messages, options = {}) {
     const { model, baseURL } = this.config;
     const url = `${baseURL || 'http://127.0.0.1:8910/v1'}/chat/completions`;
+    const ms = options.timeout ?? DEFAULT_LLM_TIMEOUT_MS;
 
     const response = await fetch(url, {
       method: 'POST',
+      signal: options.signal || AbortSignal.timeout(ms),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: model || 'local-default',
