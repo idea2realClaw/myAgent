@@ -4194,6 +4194,22 @@ function selectChat(chatId) {
       // 恢复完整聊天流快照（任务分解卡片、子任务面板、工具调用/结果等）
       hideWelcome();
       messages.innerHTML = conv.chatHtml;
+      // 历史快照兼容：命令执行类面板缺省折叠
+      // 折叠功能上线前保存的旧快照里这些面板是展开的，恢复时强制折叠；
+      // 实时命令卡 exec-output-card 同样确保折叠态，与缺省行为一致。
+      messages.querySelectorAll('.tool-exec-panel[data-tool]').forEach(panel => {
+        if (!isCommandTool(panel.dataset.tool)) return;
+        const body = panel.querySelector('.tool-exec-body');
+        const arrow = panel.querySelector('.tool-exec-arrow');
+        if (body) body.classList.add('collapsed');
+        if (arrow) arrow.classList.add('tool-exec-arrow--collapsed');
+      });
+      messages.querySelectorAll('.exec-output-card').forEach(card => {
+        const body = card.querySelector('.exec-output-body');
+        const icon = card.querySelector('.exec-output-toggle');
+        if (body) body.classList.add('collapsed');
+        if (icon && icon.textContent !== '▶') icon.textContent = '▶';
+      });
       scrollToBottom();
     } else if (conv.messages && conv.messages.length > 0) {
       // 兼容旧数据：仅渲染纯文本消息
