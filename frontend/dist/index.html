@@ -607,10 +607,14 @@
       background: var(--user-bubble); color: var(--user-text);
       border-bottom-right-radius: var(--radius-xs);
       white-space: pre-wrap;
+      /* 右侧内收 50px、最大 800px，与输入框右边留出间距且限制行宽 */
+      margin-right: 50px; max-width: 800px;
     }
     .message.assistant .bubble {
       background: var(--ai-bubble); border: 1px solid var(--border);
       border-bottom-left-radius: var(--radius-xs);
+      /* 左侧内收 50px、最大 800px，与输入框左边留出间距且限制行宽 */
+      margin-left: 50px; max-width: 800px;
     }
 
     /* 头像移到气泡上方，气泡左/右缘与输入框对齐（不再被 36px 头像 + 间距挤入） */
