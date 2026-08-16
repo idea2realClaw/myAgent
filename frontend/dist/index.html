@@ -569,7 +569,7 @@
 
     /* ── Message bubbles (QAI ChatStream 风格: 居中列、min(800px,85%) 宽) ── */
     .message { display: flex; gap: var(--space-3); max-width: none; width: 100%; margin: 0 auto; }
-    .message.user { flex-direction: row-reverse; }
+    .message.user { flex-direction: column; }
 
     .msg-content-wrap { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
     .message.user .msg-content-wrap { align-items: flex-end; }
@@ -612,6 +612,11 @@
       background: var(--ai-bubble); border: 1px solid var(--border);
       border-bottom-left-radius: var(--radius-xs);
     }
+
+    /* 头像移到气泡上方，气泡左/右缘与输入框对齐（不再被 36px 头像 + 间距挤入） */
+    .message.assistant { flex-direction: column; }
+    .message.assistant, .message.user { align-items: stretch; }
+    .message.user .avatar { align-self: flex-end; }
 
     /* ── Task plan panel ─────────────────────────────────── */
     .plan-card {
