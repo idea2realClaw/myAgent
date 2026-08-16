@@ -86,6 +86,12 @@
       --radius-xs: 4px; --radius-sm: 8px; --radius: 12px;
       --radius-lg: 16px; --radius-xl: 20px; --radius-full: 9999px;
 
+      /* ── Chat stream column width ──
+         对话流(气泡/计划卡/工具面板/执行输出)的内容宽度上限。
+         设 none 即满宽，与下方输入框(#input-area 横向 padding 同为 20px)对齐；
+         如想在超宽屏限制可读性，可改为如 1100px。 */
+      --chat-col-max: none;
+
       /* ── Shadow ── */
       --shadow-sm:  0 1px 3px rgba(0,0,0,0.30);
       --shadow-md:  0 4px 16px rgba(0,0,0,0.35);
@@ -562,7 +568,7 @@
     #messages > * { flex-shrink: 0; }
 
     /* ── Message bubbles (QAI ChatStream 风格: 居中列、min(800px,85%) 宽) ── */
-    .message { display: flex; gap: var(--space-3); max-width: min(800px, 85%); width: 100%; margin: 0 auto; }
+    .message { display: flex; gap: var(--space-3); max-width: var(--chat-col-max); width: 100%; margin: 0 auto; }
     .message.user { flex-direction: row-reverse; }
 
     .msg-content-wrap { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
@@ -610,7 +616,7 @@
     /* ── Task plan panel ─────────────────────────────────── */
     .plan-card {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: var(--space-4); width: 100%; max-width: min(800px, 85%);
+      border-radius: var(--radius); padding: var(--space-4); width: 100%; max-width: var(--chat-col-max);
       margin: 0 auto; box-shadow: var(--shadow-md);
     }
     .plan-card .plan-title {
@@ -671,7 +677,7 @@
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       font-size: var(--text-sm); color: var(--text2);
       border-left: 3px solid var(--accent);
-      max-width: min(800px, 85%); width: 100%; margin: 0 auto;
+      max-width: var(--chat-col-max); width: 100%; margin: 0 auto;
       display: flex; align-items: center; gap: var(--space-2);
     }
     .status-bar.synthesizing { border-left-color: var(--yellow); }
@@ -799,7 +805,7 @@
 
     /* ── Tool Exec Panel (QAI ChatStream 风格: 调用+输出同 Panel，立体效果) ── */
     .tool-exec-panel {
-      width: 100%; max-width: min(800px, 85%); margin: 0 auto;
+      width: 100%; max-width: var(--chat-col-max); margin: 0 auto;
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       overflow: hidden; background: var(--bg2); font-size: var(--text-base);
       box-shadow: 0 2px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
@@ -894,7 +900,7 @@
     .exec-output-card {
       margin: 0 auto; border-radius: var(--radius-sm);
       background: #0a0a0f; border: 1px solid #1a1a2e;
-      font-size: 0.75rem; max-width: min(800px, 85%); width: 100%; overflow: hidden;
+      font-size: 0.75rem; max-width: var(--chat-col-max); width: 100%; overflow: hidden;
     }
     .exec-output-header {
       display: flex; align-items: center; gap: 8px;
