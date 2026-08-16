@@ -558,7 +558,7 @@
     }
 
     #messages {
-      flex: 1; overflow-y: auto; padding: var(--space-5);
+      flex: 1; overflow-y: auto; padding: var(--space-5) 160px;
       display: flex; flex-direction: column; gap: var(--space-4);
     }
     /* 关键修复: flex 列子项默认 flex-shrink:1，当已有内容撑过容器高度时，
@@ -814,7 +814,7 @@
 
     /* ── Tool Exec Panel (QAI ChatStream 风格: 调用+输出同 Panel，立体效果) ── */
     .tool-exec-panel {
-      width: 100%; max-width: var(--chat-col-max); margin: 0 auto;
+      width: 100%; max-width: 800px; margin-left: 50px;
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       overflow: hidden; background: var(--bg2); font-size: var(--text-base);
       box-shadow: 0 2px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
@@ -907,9 +907,9 @@
     .tool-exec-panel--error .tool-exec-output-pre { color: var(--red); }
     /* ── Exec Output Card ────────────────────────── */
     .exec-output-card {
-      margin: 0 auto; border-radius: var(--radius-sm);
+      margin-left: 50px; border-radius: var(--radius-sm);
       background: #0a0a0f; border: 1px solid #1a1a2e;
-      font-size: 0.75rem; max-width: var(--chat-col-max); width: 100%; overflow: hidden;
+      font-size: 0.75rem; max-width: 800px; width: 100%; overflow: hidden;
     }
     .exec-output-header {
       display: flex; align-items: center; gap: 8px;
