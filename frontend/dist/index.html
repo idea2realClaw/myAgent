@@ -235,15 +235,6 @@
     #scroll-fab:hover { opacity: .9; }
     #scroll-fab.show { display: flex; }
 
-    /* Regenerate button */
-    #regen-btn {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 6px 10px; border-radius: 8px; font-size: 0.8125rem; font-weight: 600;
-      background: var(--bg4); color: var(--text); border: 1px solid var(--border); cursor: pointer;
-    }
-    #regen-btn:hover { border-color: var(--accent); color: var(--accent); }
-    #regen-btn:disabled { opacity: .4; cursor: not-allowed; }
-
     /* ── Sidebar ─────────────────────────────────────────── */
     #sidebar {
       background: var(--bg2); border-right: 1px solid var(--border);
@@ -1950,13 +1941,9 @@
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
             Stop
           </button>
-          <button id="regen-btn" onclick="regenerate()" title="重新生成上一条回答">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
-            重新生成
-          </button>
         </div>
       </div>
-      <div id="input-hint">Enter to send · Shift+Enter for newline · Parallel mode auto-splits complex tasks · 重新生成可重跑上一轮</div>
+      <div id="input-hint">Enter to send · Shift+Enter for newline · Parallel mode auto-splits complex tasks</div>
     </div>
     <button id="scroll-fab" onclick="scrollToBottom(true)" title="滚动到底部">↓</button>
   </main>
@@ -2345,8 +2332,6 @@ function handleMessage(msg) {
     removeStatus();
     isThinking = false;
     setSendEnabled(true);
-    const regenBtn = document.getElementById('regen-btn');
-    if (regenBtn) regenBtn.disabled = false;
     appendLog('info', `✅ 回答完成，返回给用户`, { length: (msg.content || '').length });
 
     // Toggle buttons: hide Stop, show Send
@@ -3225,8 +3210,6 @@ function sendMessage() {
   input.value = '';
   autoResize(input);
   setSendEnabled(false);
-  const regenBtn = document.getElementById('regen-btn');
-  if (regenBtn) regenBtn.disabled = true;
   streamBuffer = '';
   streamEl = null;
   currentAssistantBubble = null;
@@ -3282,14 +3265,6 @@ function onKeyDown(e) {
     e.preventDefault();
     sendMessage();
   }
-}
-
-// ── 重新生成上一条回答 ──
-function regenerate() {
-  if (!wsReady || isThinking) return;
-  const btn = document.getElementById('regen-btn');
-  if (btn) btn.disabled = true;
-  ws.send(JSON.stringify({ type: 'regenerate', conversationId: currentConversationId }));
 }
 
 function autoResize(el) {

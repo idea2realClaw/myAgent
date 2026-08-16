@@ -802,6 +802,9 @@ function buildSystemPrompt(provider = 'openai') {
   (b) 凡本次回答全程未调用任何工具、仅依靠模型已有知识/训练经验作答，必须在回答最开头显式声明，例如：「我根据经验认为：…」或「（以下为基于我已有知识的回答，未经实时工具核实）…」。即使只是闲聊或常识性问题也要照此声明，绝不能把未经验证的内容伪装成已通过工具核实的事实。诚实永远优先于语句流畅。
   (c) 可用工具提示：联网搜索请用 web_search 工具（数据源 DuckDuckGo，**不是** Google/Bing）；deep-search 只是一个【技能/方法名】，**不是**可直接返回数据的工具，不要声称"调用了 deep-search 工具"或"数据来源：Google/Bing"。
   (d) 严禁在回答中以 JSON 文本形式"调用"工具或技能，例如 '{"tool":"..."}' / '{"skill":"..."}' / '{"invocation":"..."}' / '{"name":"..."}' 这类写法——工具/技能由系统在后台自动调用，你只需用自然语言描述需求，或直接使用原生 function calling。若需要联网检索，请直接调用 web_search 工具，绝不要写 '{"skill":"deep-search",...}' 这样的伪调用（它不会被执行，且会被系统视为编造并拦截）。
+  (e) 工具使用边界（务必遵守）：web_search 仅用于「需要联网获取外部/实时信息」的场景（最新新闻、实时数据、具体网页内容、联网文档）；
+    本地文件/目录/日志的检索请用 file_* 工具（file_read / file_grep / file_glob / file_list / file_search），**绝对不要用 web_search**；
+    简单的常识、闲聊、身份类问题直接用已有知识回答，无需调用任何工具。
 - 股票历史/区间查询（如"过去五天""近一周""历史走势"）：调用 stock_price 工具时务必传入 range 参数（"5d"=过去5天、"1mo"=过去1月、"3mo"、"1y"），工具会返回 history 数组（每日 开盘/最高/最低/收盘/成交量），据此归纳趋势。绝不要用默认的"当前快照"冒充历史数据。
 - Current date: ${new Date().toISOString().split('T')[0]}`);
 
@@ -1606,6 +1609,10 @@ async function classifyQuestion(llm, userMessage) {
 
   // ① 含 URL → 必然需要联网/工具（web_fetch / web_search / shell），直接判 complex，跳过 LLM
   if (/https?:\/\//i.test(trimmed)) return 'complex';
+
+  // ② 身份/自我介绍类问题：纯知识可答，直接走 simple（LLM 直接回答，不拆子任务、不调 web_search）
+  const identityRe = /(who\s*(are|r)\s*you|what\s*(are|'s)?\s*you|your\s*name|introduce\s*(yourself|you)|你是谁|你是什么(助手|ai|模型|东西)?|你的名字|你叫什么|你叫啥|介绍(一下|下)?你|你的身份|你是什么人)/i;
+  if (identityRe.test(trimmed)) return 'simple';
 
   // Action words that always trigger complex decomposition (even if short)
   const actionWords = [

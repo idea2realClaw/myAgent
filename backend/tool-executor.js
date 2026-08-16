@@ -216,7 +216,7 @@ export function buildToolInstructions(forNativeFunctionCalling = false) {
   lines.push('### Important Notes:');
   lines.push('- Always use \`shell_execute\` for Git operations, npm/yarn commands, or any CLI tool.');
   lines.push('- Use \`web_fetch\` to get current information from URLs (the LLM training data has a cutoff).');
-  lines.push('- Use \`web_search\` to search the web for current events, documentation, or research.');
+  lines.push('- Use \`web_search\` ONLY for fetching current/external info from the internet (latest news, live data, web pages/docs). For searching LOCAL files/directories/logs, use \`file_grep\` / \`file_glob\` / \`file_list\` instead — never \`web_search\`.');
   lines.push('- Use \`python_execute\` for calculations, data analysis, or running Python code.');
   lines.push('- Use \`http_request\` to call REST APIs or interact with web services.');
   lines.push('- Use \`file_read\` before editing files to understand their current content.');
