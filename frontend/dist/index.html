@@ -551,6 +551,8 @@
     #messages {
       flex: 1; overflow-y: auto; padding: var(--space-5) 160px;
       display: flex; flex-direction: column; gap: var(--space-4);
+      /* 对话区锁定在输入框正上方，与输入框之间留 50px 空隙 */
+      margin-bottom: 50px;
     }
     /* 关键修复: flex 列子项默认 flex-shrink:1，当已有内容撑过容器高度时，
        浏览器会把最后追加的子项(工具面板/气泡)压到接近 0 高度，
