@@ -3,7 +3,7 @@
 ## 身份文件人称约定（用户 2026-07-19 确立）
 - `Memory/ID.md` / `DNA.md` / `Soul.md` 等身份文件：设定 AI → 用「你是 xxx」；设定用户/角色人设 → 用「我是 xxx」。
 - 理由：①身份文件由 `backend/identity-manager.js` 注入 system prompt，外层包裹用第二人称（"define who you are. Embody them fully"），内层用「你」才一致；②`DNA.md` 自身已全第二人称，ID.md 应跟它对齐；③「我是」在多轮拼接中可能被误判为用户发言（XML 包裹能缓解但不绝对）。
-- MyAgent 现状：ID.md Name 段已改为「你是 ARIA」；DNA.md 本就全「你」；Soul.md「我是你师父，你是龙十三」中「我」=师父人设、「你」=AI，符合规则，未动。
+- MyAgent 现状：ID.md Name 段为「你是 MyAgent」（自主推理智能体）；DNA.md 本就全「你」；Soul.md「我是你师父，你是龙十三」中「我」=师父人设、「你」=AI，符合规则，未动。
 - 记忆法：**设定 AI → 你是；设定用户/角色 → 我是**。
 
 ## MyAgent 重启方式（单进程自监控，无 daemon/无额外端口）
