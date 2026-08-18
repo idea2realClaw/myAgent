@@ -2622,6 +2622,11 @@ function logPanelRect(el, tag) {
     var body = el.querySelector('.tool-exec-body, .exec-output-body');
     var collapsed = body ? body.classList.contains('collapsed') : null;
     var r = el.getBoundingClientRect();
+    var msgsEl = document.getElementById('messages');
+    var msgsScrollTop = msgsEl ? Math.round(msgsEl.scrollTop) : 'n/a';
+    var msgsScrollHeight = msgsEl ? Math.round(msgsEl.scrollHeight) : 'n/a';
+    var msgsClientHeight = msgsEl ? Math.round(msgsEl.clientHeight) : 'n/a';
+    var msgsNearBottom = (msgsEl && (msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight) < 120);
     var corners = {
       TL: { x: Math.round(r.left), y: Math.round(r.top) },
       TR: { x: Math.round(r.right), y: Math.round(r.top) },
@@ -2636,7 +2641,8 @@ function logPanelRect(el, tag) {
       ' size=' + Math.round(r.width) + 'x' + Math.round(r.height) +
       ' rect(top=' + Math.round(r.top) + ' left=' + Math.round(r.left) + ' right=' + Math.round(r.right) + ' bottom=' + Math.round(r.bottom) + ')' +
       ' corners=' + JSON.stringify(corners) +
-      ' messagesWidth=' + (document.getElementById('messages') ? Math.round(document.getElementById('messages').clientWidth) : 'n/a');
+      ' messagesWidth=' + (document.getElementById('messages') ? Math.round(document.getElementById('messages').clientWidth) : 'n/a') +
+      ' msgs(scrollTop=' + msgsScrollTop + ' scrollHeight=' + msgsScrollHeight + ' clientHeight=' + msgsClientHeight + ' nearBottom=' + msgsNearBottom + ')';
     console.log(line);
     try {
       fetch('/api/clientlog', {
@@ -3047,12 +3053,17 @@ function renderUserMessage(text) {
   }
 }
 
+// 用户在对话区是否停留在底部（由 scroll 事件持久维护）。
+// 不能在每个 scrollToBottom 里用「scrollHeight - scrollTop - clientHeight」瞬时判断，
+// 因为新内容 append 后 scrollHeight 立刻变大而 scrollTop 还没变，会把「已在底部」误判成「不在底部」，
+// 导致工具面板出现时页面不向上滚动、面板一直向下堆积（坐标持续增大）。
+let userNearBottom = true;
+
 function scrollToBottom(force) {
   const msgs = document.getElementById('messages');
   if (!msgs) return;
-  const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
-  // 仅在用户本就在底部、或显式强制（点 FAB）时才滚动；否则保留阅读位置并提示 FAB
-  if (force || nearBottom) {
+  // 仅在用户停留在底部、或显式强制（点 FAB）时才跟随滚动；否则保留阅读位置并提示 FAB
+  if (force || userNearBottom) {
     // 最后一条消息锚定在「距输入框约 100px」处：
     // #messages 的 margin-bottom 提供与输入框的固定空隙，此处再在容器内保留 (100 - margin)，
     // 合计距输入框 100px。实时读取 margin，避免与 CSS 不一致。
@@ -3074,6 +3085,7 @@ function setupScrollFab() {
   if (!msgs || !fab) return;
   msgs.addEventListener('scroll', () => {
     const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
+    userNearBottom = nearBottom;
     fab.classList.toggle('show', !nearBottom);
   });
 }
