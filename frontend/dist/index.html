@@ -3053,7 +3053,12 @@ function scrollToBottom(force) {
   const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
   // 仅在用户本就在底部、或显式强制（点 FAB）时才滚动；否则保留阅读位置并提示 FAB
   if (force || nearBottom) {
-    msgs.scrollTop = msgs.scrollHeight;
+    // 最后一条消息锚定在「距输入框约 100px」处：
+    // #messages 的 margin-bottom 提供与输入框的固定空隙，此处再在容器内保留 (100 - margin)，
+    // 合计距输入框 100px。实时读取 margin，避免与 CSS 不一致。
+    const mb = parseFloat(getComputedStyle(msgs).marginBottom) || 0;
+    const reserve = Math.max(0, 100 - mb);
+    msgs.scrollTop = Math.max(0, msgs.scrollHeight - reserve);
     const fab = document.getElementById('scroll-fab');
     if (fab) fab.classList.remove('show');
   } else {
