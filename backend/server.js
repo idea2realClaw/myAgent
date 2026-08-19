@@ -1617,54 +1617,39 @@ async function classifyQuestion(llm, userMessage) {
   const trimmed = userMessage.trim().toLowerCase();
 
   // ① 含 URL → 必然需要联网/工具（web_fetch / web_search / shell），直接判 complex，跳过 LLM
-  if (/https?:\/\//i.test(trimmed)) return 'complex';
+  if (/https?:\/\//i.test(trimmed)) return { type: 'complex', research: false };
 
-  // ② 身份/自我介绍类问题：纯知识可答，直接走 simple（LLM 直接回答，不拆子任务、不调 web_search）
-  const identityRe = /(who\s*(are|r)\s*you|what\s*(are|'s)?\s*you|your\s*name|introduce\s*(yourself|you)|你是谁|你是什么(助手|ai|模型|东西)?|你的名字|你叫什么|你叫啥|介绍(一下|下)?你|你的身份|你是什么人)/i;
-  if (identityRe.test(trimmed)) return 'simple';
-
-  // Action words that always trigger complex decomposition (even if short)
-  const actionWords = [
-    '搜索', '查找', '找', '查', '读', '写', '改', '删', '创建',
-    '执行', '运行', '安装', '下载', '上传',
-    '分析', '统计', '对比', '比较', '列出', '显示', '打开', '查看', '看看', '浏览',
-    'github', '分支', 'branches', 'branch', '仓库', 'repo', 'api', '网页', '网站',
-    'search', 'find', 'read', 'write', 'edit', 'delete', 'create',
-    'run', 'exec', 'install', 'download', 'upload',
-    'analyze', 'list', 'grep', 'glob', 'fetch', 'curl', 'browse', 'open',
-    // 实时金融 / 行情查询：必须走带工具路径去真实拉取数据
-    '价格', '股价', '行情', '市值', '指数', '汇率', '基金', '涨跌', '多少', '报价',
-    'etf', 'stock', 'price', 'quote', 'ticker',
-    // 实时 / 新闻 / 当前信息：必须走带工具路径，避免模型凭记忆编造
-    '最新', '新闻', '消息', '比赛', '赛果', '比分', '今日', '今天', '昨天', '现在', '当前', '实时', '天气',
-    'news', 'latest', 'result', 'score', 'today', 'weather', 'live', 'update', 'current',
-  ];
-  for (const aw of actionWords) {
-    if (trimmed.includes(aw)) return 'complex';
-  }
-
-  // 5 characters or less → simple (only if not an action word — already checked above)
-  if (trimmed.length <= 5) return 'simple';
-
-  // Obvious greetings → skip LLM call
+  // ② 明显问候 → 直接作答，跳过 LLM（其余一律交给大模型判断，不再用关键词硬判）
   const greetings = ['你好','您好','hi','hello','谢谢','thanks','再见','拜拜','好的','好','行','ok','OK'];
   for (const g of greetings) {
-    if (trimmed === g || trimmed.startsWith(g)) return 'simple';
+    if (trimmed === g || trimmed.startsWith(g)) return { type: 'simple', research: false };
   }
 
-  // Use LLM to classify: cheap single-token completion
+  // ③ 大模型判断：simple / complex / research 的唯一权威来源
+  //    simple   → 直接作答（能答就直答，不调工具）
+  //    complex  → 任务拆解（多步/文件/代码/分析，但无需实时外部资料）
+  //    research → 任务拆解 + 强制联网检索（需最新/外部真实资料，杜绝凭记忆编造）
   try {
     const messages = [
-      { role: 'system', content: 'You are a classifier. Respond with exactly one word: "simple" for a question that can be answered directly with general knowledge, greetings, opinions, or simple explanations. Respond "complex" if the question requires file operations, web research, code execution, searching, shell commands, multi-step analysis, or modifying files. Do NOT include any other text.' },
+      {
+        role: 'system',
+        content:
+          'You are a router. Classify the user message into exactly ONE of three labels:\n' +
+          '- "simple": can be answered directly from general knowledge, is a greeting, opinion, or simple explanation. No tools needed.\n' +
+          '- "complex": requires multi-step work, file operations, code execution, searching, shell commands, or analysis, but does NOT require fetching live/external real-time data.\n' +
+          "- \"research\": requires live/external/real-time information (latest news, current scores, today's weather, recent events, specific up-to-date data) that must be retrieved with web_search rather than answered from memory.\n" +
+          'Respond with ONLY the single label word: simple, complex, or research.',
+      },
       { role: 'user', content: trimmed },
     ];
     const result = await llm.chat(messages, { temperature: 0, maxTokens: 10 });
-    const classification = result.trim().toLowerCase();
-    if (classification.includes('complex')) return 'complex';
-    return 'simple';
+    const c = result.trim().toLowerCase();
+    if (c.includes('research')) return { type: 'complex', research: true };
+    if (c.includes('complex')) return { type: 'complex', research: false };
+    return { type: 'simple', research: false };
   } catch {
-    // Fallback: if LLM call fails, default to complex (safe choice)
-    return 'complex';
+    // Fallback: if LLM call fails, default to complex (safe choice, but not forced research)
+    return { type: 'complex', research: false };
   }
 }
 
@@ -2265,13 +2250,11 @@ async function runSubtaskKernel({ ws, session, llm, wireMessages, config }) {
 }
 
 // 判断是否需要外部真实资料的「非常见/研究型」问题（需多次联网检索，不可凭记忆作答）
-const RESEARCH_RE = /最新|新闻|消息|比赛|赛果|比分|今日|今天|昨天|本周|本月|今年|实时|当前|现在|天气|汇率|政策|发布|上市|夺冠|冠军|排名|榜单|趋势|分析|如何|怎么|为什么|对比|比较|研究|报告|数据|事件|谁|哪个|哪支|几比|20\d\d|世界杯|奥运|选举|财报|gdp|news|latest|today|result|score|weather|report|analysis|compare|why|how|who|when/i;
-function isResearchQuestion(q) {
-  return RESEARCH_RE.test(q || '');
-}
+// 注：「是否需联网检索」现由 classifyQuestion 的 research 标签统一判断（见 1616 行），
+// 不再用关键词正则硬判，避免越权覆盖大模型的简单/复杂判断。
 
 // 主编排：规划 → 执行(打勾) → 自检 → 循环 → 汇总+遗留
-async function runPlannedLoop({ ws, session, llm, system, history, config }) {
+async function runPlannedLoop({ ws, session, llm, system, history, config, research = false }) {
   const question = history[history.length - 1]?.content || '';
 
   // ── 经验召回：相似任务的历史经验注入 system（让 Agent 越用越聪明）──
@@ -2286,7 +2269,6 @@ async function runPlannedLoop({ ws, session, llm, system, history, config }) {
     console.warn('[PlannedLoop] experience recall failed:', e.message);
   }
 
-  const research = isResearchQuestion(question);
   console.log(`[PlannedLoop] 原始问题: ${question}`);
   console.log(`[PlannedLoop] 研究型问题(需多次联网检索): ${research}`);
 
@@ -2953,16 +2935,16 @@ async function handleChat(sessionId, session, msg) {
   // （原生工具调用 + 子 Agent 派发 + skill 加载 + 上下文压缩）
   broadcast(ws, { type: 'thinking', message: '🧠 分析问题难度...' });
   let isSimple = false;
+  let needsResearch = false;
   try {
-    const questionType = await classifyQuestion(llm, userMessage);
-    isSimple = (questionType === 'simple');
+    const qc = await classifyQuestion(llm, userMessage);
+    isSimple = (qc.type === 'simple');
+    needsResearch = !!qc.research;
   } catch (err) {
     console.warn('[handleChat] classify failed, defaulting to complex:', err.message);
   }
-  if (forceStockComplex) isSimple = false; // 股票历史/区间查询必须有工具可用
-  // 非常见/研究型问题（需最新或外部真实资料）→ 强制走带工具规划环，禁止纯文本凭记忆作答
-  if (isResearchQuestion(userMessage)) isSimple = false;
-  console.log(`[Chat] 问题分类: ${isSimple ? 'simple(纯文本无工具)' : 'complex(带工具规划环)'}${forceStockComplex ? ' [股票历史/区间]' : ''}${isResearchQuestion(userMessage) ? ' [研究型强制complex]' : ''}`);
+  if (forceStockComplex) isSimple = false; // 股票历史/区间查询必须有工具可用（走 stock_price，不强制 web_search）
+  console.log(`[Chat] 问题分类: ${isSimple ? 'simple(纯文本无工具)' : 'complex(带工具规划环)'}${forceStockComplex ? ' [股票历史/区间]' : ''}${needsResearch ? ' [研究型-需联网检索]' : ''}`);
 
   try {
     if (isSimple) {
@@ -2971,7 +2953,7 @@ async function handleChat(sessionId, session, msg) {
     } else {
       // 复杂问题：先分解任务 → 逐项执行(打勾) → 自检 → 不满足则再分解循环 → 汇总并报告遗留
       broadcast(ws, { type: 'thinking', message: '🧠 正在规划并执行任务...' });
-      await runPlannedLoop({ ws, session, llm, system, history, config: cfg });
+      await runPlannedLoop({ ws, session, llm, system, history, config: cfg, research: needsResearch });
     }
   } catch (err) {
     broadcast(ws, { type: 'error', message: err.message });
