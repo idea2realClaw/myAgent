@@ -15,12 +15,16 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import dns from 'node:dns';
+import dotenv from 'dotenv';
 
 // 强制 IPv4 优先：部分网络（如香港）下 Yahoo 等域名的 DNS 返回 IPv6 优先，
 // 而 Node fetch(undici) 在双栈环境会先连 IPv6、该 IPv6 路由不通且回退不及时，
 // 导致 UND_ERR_CONNECT_TIMEOUT（"fetch failed"）。浏览器有正确的双栈回退所以能通。
 // 此设置让所有 fetch 优先走 IPv4，修复 stock_price / web_fetch 等工具的外网超时。
 dns.setDefaultResultOrder('ipv4first');
+
+// 从 .env（已被 gitignore）加载密钥等环境变量，避免把真实密钥写进 config.json 或提交到仓库
+dotenv.config();
 
 const execAsync = promisify(exec);
 
@@ -54,6 +58,7 @@ const ROOT_DIR = path.join(__dirname, '..');
 const IDENTITY_DIR = path.join(ROOT_DIR, 'Memory');
 const SKILLS_DIR = ROOT_DIR;
 const CONFIG_FILE = path.join(ROOT_DIR, 'config.json');
+const ENV_FILE = path.join(ROOT_DIR, '.env'); // 密钥等环境变量（已被 gitignore），绝不入库
 const LOGS_DIR = path.join(ROOT_DIR, 'logs');
 
 // ============================================================
@@ -130,31 +135,79 @@ console.error = (...args) => {
 // Default: QGenie provider
 // ============================================================
 
-function loadConfig() {
-  if (fs.existsSync(CONFIG_FILE)) {
-    try {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    } catch { /* ignore */ }
-  }
-  return {
-    provider: 'qgenie', // Default changed from openrouter to qgenie
-    model: 'default',
-    apiKey: '',
-    baseURL: 'http://127.0.0.1:8910/v1', // Default to local GenieAPIService
-    temperature: 0.7,
-    // Per-provider configs
-    providers: {
-      qgenie: { apiKey: '', baseURL: 'https://qgenie.example.com/v1', model: 'default' },
-      local: { apiKey: '', baseURL: 'http://127.0.0.1:8910/v1', model: 'default' },
-      openai: { apiKey: '', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' },
-      openrouter: { apiKey: '', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o' },
-      anthropic: { apiKey: '', baseURL: '', model: 'claude-opus-4-20250514' },
-    },
-  };
+// 解析最终使用的 API Key：优先级 环境变量/.env > config.json（占位符视为空）
+// 这样 config.json 里只放占位符（如 ${OPENROUTER_API_KEY}），真实密钥通过 .env 或环境变量注入，永不入库。
+const API_KEY_PLACEHOLDER_RE = /\$\{|\.\.\.|your_|replace_|placeholder|<<|>>/i;
+// config.json 中原始的 apiKey 字符串（可能是占位符），用于 saveConfig 时避免把真实密钥回写文件
+let rawFileApiKey = '';
+
+function resolveApiKey(cfg) {
+  const provider = (cfg && cfg.provider) || 'openrouter';
+  const envName = provider.toUpperCase().replace(/-/g, '_') + '_API_KEY';
+  const fromEnv = process.env[envName] || process.env.MYAGENT_API_KEY;
+  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+  const fileKey = (cfg && cfg.apiKey) || '';
+  if (fileKey && !API_KEY_PLACEHOLDER_RE.test(fileKey)) return fileKey; // 兼容尚未迁移的老配置（config.json 直接写密钥）
+  return '';
 }
 
+function loadConfig() {
+  let cfg = null;
+  let fileApiKeyRaw = '';
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      fileApiKeyRaw = (cfg && cfg.apiKey) || '';
+    } catch { /* ignore corrupt config */ }
+  }
+  if (!cfg || typeof cfg !== 'object') {
+    cfg = {
+      provider: 'qgenie', // Default changed from openrouter to qgenie
+      model: 'default',
+      apiKey: '',
+      baseURL: 'http://127.0.0.1:8910/v1', // Default to local GenieAPIService
+      temperature: 0.7,
+      // Per-provider configs
+      providers: {
+        qgenie: { apiKey: '', baseURL: 'https://qgenie.example.com/v1', model: 'default' },
+        local: { apiKey: '', baseURL: 'http://127.0.0.1:8910/v1', model: 'default' },
+        openai: { apiKey: '', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' },
+        openrouter: { apiKey: '', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o' },
+        anthropic: { apiKey: '', baseURL: '', model: 'claude-opus-4-20250514' },
+      },
+    };
+    fileApiKeyRaw = '';
+  }
+  rawFileApiKey = fileApiKeyRaw;
+  // 注入真实密钥：环境变量 / .env 优先，其次 config.json（占位符忽略）
+  cfg.apiKey = resolveApiKey(cfg);
+  return cfg;
+}
+
+// 把真实密钥写入 .env（gitignore），让 config.json 始终保持无密钥的占位符状态
+function upsertEnvKey(name, value) {
+  let lines = [];
+  if (fs.existsSync(ENV_FILE)) {
+    try { lines = fs.readFileSync(ENV_FILE, 'utf8').split(/\r?\n/); } catch { lines = []; }
+  }
+  const prefix = name + '=';
+  let replaced = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith(prefix)) { lines[i] = prefix + value; replaced = true; break; }
+  }
+  if (!replaced) lines.push(prefix + value);
+  try { fs.writeFileSync(ENV_FILE, lines.join('\n') + '\n'); } catch (e) { console.warn('[config] 写入 .env 失败:', e.message); }
+  process.env[name] = value; // 立即对本进程生效
+}
+
+// 持久化配置：apiKey 字段永远不写真实密钥——一律回退为 config.json 原始占位符，
+// 真实密钥只来自环境变量 / .env。这样即使 UI 保存设置也不会把密钥落盘到 config.json。
 function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+  const toWrite = { ...cfg };
+  if (toWrite.apiKey !== rawFileApiKey) {
+    toWrite.apiKey = rawFileApiKey;
+  }
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(toWrite, null, 2));
 }
 
 // ============================================================
@@ -902,9 +955,17 @@ app.get('/api/config', (req, res) => {
 app.post('/api/config', (req, res) => {
   const existing = loadConfig();
   const updated = { ...existing, ...req.body };
-  // Mask API key if '***'
   if (req.body.apiKey === '***') {
-    updated.apiKey = existing.apiKey;
+    // 前端只回传掩码：保留 config.json 原有占位符，绝不把环境变量里的真实密钥写回文件
+    updated.apiKey = rawFileApiKey;
+  } else if (req.body.apiKey && !API_KEY_PLACEHOLDER_RE.test(req.body.apiKey)) {
+    // 用户在 UI 填入真实密钥 → 落到 .env（gitignore），config.json 仅保留占位符
+    const provider = (updated.provider || 'openrouter').toUpperCase().replace(/-/g, '_');
+    upsertEnvKey(provider + '_API_KEY', String(req.body.apiKey).trim());
+    updated.apiKey = rawFileApiKey || '${' + provider + '_API_KEY}';
+  } else {
+    // 占位符或空字符串 → 原样保存（用户主动清空/保留占位符）
+    updated.apiKey = req.body.apiKey;
   }
   saveConfig(updated);
   res.json({ success: true });

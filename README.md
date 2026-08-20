@@ -35,13 +35,36 @@ node server.js
 
 ## Configuration
 
-Set your API key in the **Settings** tab of the UI, or edit `config.json`:
+API keys are **never stored in `config.json` and never committed to the repository**. `config.json` is
+git-ignored and only holds a placeholder (`"apiKey": "${OPENROUTER_API_KEY}"`); the real key is injected via an
+environment variable or a local `.env` file (also git-ignored).
+
+### Secrets / API Key Management (IMPORTANT)
+
+- **Never** commit a real API key. Both `config.json` and `.env` are listed in `.gitignore`.
+- The backend resolves the key in this order:
+  1. Environment variable `<PROVIDER>_API_KEY` (e.g. `OPENROUTER_API_KEY`), or the generic `MYAGENT_API_KEY`
+  2. `.env` file at the repo root (loaded via `dotenv`) — copy `.env.example` to `.env` and fill it in
+  3. `config.json` `apiKey` field, **only if it is not a placeholder** (legacy fallback for unmigrated setups)
+- When you save settings in the UI, any real key you type is written to `.env` automatically; `config.json` stays key-free.
+- If a key is ever leaked, **revoke it on the provider (OpenRouter / OpenAI / Anthropic) and regenerate**, then update `.env`.
+
+Quick setup:
+
+```bash
+cp .env.example .env
+# edit .env and set OPENROUTER_API_KEY=sk-or-...
+```
+
+### config.json (template)
+
+See `config.json.sample` for a full template. The local `config.json` only contains a placeholder:
 
 ```json
 {
   "provider": "openrouter",
   "model": "nvidia/nemotron-3-super-120b-a12b:free",
-  "apiKey": "sk-...",
+  "apiKey": "${OPENROUTER_API_KEY}",
   "baseURL": "https://openrouter.ai/api/v1",
   "temperature": 0.7
 }

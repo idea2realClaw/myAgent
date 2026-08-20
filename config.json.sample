@@ -1,0 +1,14 @@
+{
+  "provider": "openrouter",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "apiKey": "${OPENROUTER_API_KEY}",
+  "baseURL": "https://openrouter.ai/api/v1",
+  "temperature": 0.7,
+  "skillModes": {
+    "example-skill": "both"
+  },
+  "disabledSkills": [
+    "qualcomm-ai-assistant",
+    "mail-163"
+  ]
+}
